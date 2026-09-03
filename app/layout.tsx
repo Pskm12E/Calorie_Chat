@@ -13,9 +13,23 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000',
+  ),
   title: 'Calorie Chat — Personal meal tracker',
   description:
     'Log meals naturally, review calorie estimates, and follow your daily progress.',
+  openGraph: {
+    title: 'Calorie Chat',
+    description: 'Eat. Ask. Track.',
+    images: ['/og.png'],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Calorie Chat',
+    description: 'Eat. Ask. Track.',
+    images: ['/og.png'],
+  },
 };
 
 export default function RootLayout({
