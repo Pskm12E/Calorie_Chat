@@ -119,6 +119,10 @@ function identifierToEmail(identifier: string) {
     : `${normalized}@${USER_ID_DOMAIN}`;
 }
 function accountLabel(user: User) {
+  const savedUserId = user.user_metadata.user_id;
+  if (typeof savedUserId === 'string' && savedUserId.trim()) {
+    return savedUserId.trim();
+  }
   const email = user.email ?? '';
   return email.endsWith(`@${USER_ID_DOMAIN}`)
     ? email.slice(0, -(USER_ID_DOMAIN.length + 1))
@@ -1781,6 +1785,11 @@ function AuthScreen({
             password,
             options: { data: { user_id: identifier.trim() } },
           });
+    if (!result.error && result.data.user && !identifier.trim().includes('@')) {
+      await supabase.auth.updateUser({
+        data: { user_id: identifier.trim() },
+      });
+    }
     setMessage(
       result.error?.message ??
         (mode === 'signup' && !result.data.session
