@@ -4,15 +4,18 @@ import { useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import {
   Apple,
+  BookmarkPlus,
   CalendarDays,
   ChartNoAxesCombined,
   ChevronLeft,
   ChevronRight,
   CircleUserRound,
+  Coffee,
   History,
   Home,
   LoaderCircle,
   LogOut,
+  MoreHorizontal,
   Pencil,
   Plus,
   Scale,
@@ -44,6 +47,16 @@ type Meal = {
 };
 type WeightEntry = { id: string; weight_kg: number; recorded_at: string };
 type StepEntry = { id: string; date: string; steps: number };
+type SavedFood = {
+  id: string;
+  food_name: string;
+  meal_type: MealType;
+  quantity: number;
+  calories: number;
+  notes: string | null;
+  times_logged: number;
+  last_used_at: string | null;
+};
 type EstimateMeal = Omit<Meal, 'id' | 'date' | 'consumed_at' | 'source'>;
 type Estimate = {
   reply: string;
@@ -107,10 +120,14 @@ export default function HomePage() {
   const [meals, setMeals] = useState<Meal[]>([]);
   const [weights, setWeights] = useState<WeightEntry[]>([]);
   const [steps, setSteps] = useState<StepEntry[]>([]);
+  const [savedFoods, setSavedFoods] = useState<SavedFood[]>([]);
   const [goal, setGoal] = useState(1900);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [mealModal, setMealModal] = useState<Meal | 'new' | null>(null);
+  const [savedFoodModal, setSavedFoodModal] = useState<
+    SavedFood | 'new' | null
+  >(null);
 
   const loadData = useCallback(async (activeUser: User) => {
     setLoading(true);
@@ -121,34 +138,46 @@ export default function HomePage() {
         { user_id: activeUser.id },
         { onConflict: 'user_id', ignoreDuplicates: true },
       );
-    const [mealResult, weightResult, stepResult, settingResult] =
-      await Promise.all([
-        supabase
-          .from('meals')
-          .select('*')
-          .gte('date', singaporeDate(new Date(Date.now() - 31 * 86400000)))
-          .order('consumed_at', { ascending: false }),
-        supabase
-          .from('weight_entries')
-          .select('*')
-          .order('recorded_at', { ascending: false })
-          .limit(60),
-        supabase
-          .from('step_entries')
-          .select('*')
-          .gte('date', singaporeDate(new Date(Date.now() - 31 * 86400000)))
-          .order('date', { ascending: false }),
-        supabase.from('user_settings').select('*').single(),
-      ]);
+    const [
+      mealResult,
+      weightResult,
+      stepResult,
+      settingResult,
+      savedFoodResult,
+    ] = await Promise.all([
+      supabase
+        .from('meals')
+        .select('*')
+        .gte('date', singaporeDate(new Date(Date.now() - 31 * 86400000)))
+        .order('consumed_at', { ascending: false }),
+      supabase
+        .from('weight_entries')
+        .select('*')
+        .order('recorded_at', { ascending: false })
+        .limit(60),
+      supabase
+        .from('step_entries')
+        .select('*')
+        .gte('date', singaporeDate(new Date(Date.now() - 31 * 86400000)))
+        .order('date', { ascending: false }),
+      supabase.from('user_settings').select('*').single(),
+      supabase
+        .from('saved_foods')
+        .select('*')
+        .order('last_used_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false }),
+    ]);
     const firstError =
       mealResult.error ||
       weightResult.error ||
       stepResult.error ||
-      settingResult.error;
+      settingResult.error ||
+      savedFoodResult.error;
     if (firstError) setError(firstError.message);
     setMeals((mealResult.data ?? []) as Meal[]);
     setWeights((weightResult.data ?? []) as WeightEntry[]);
     setSteps((stepResult.data ?? []) as StepEntry[]);
+    setSavedFoods((savedFoodResult.data ?? []) as SavedFood[]);
     setGoal(settingResult.data?.daily_calorie_goal ?? 1900);
     setLoading(false);
   }, []);
@@ -176,9 +205,9 @@ export default function HomePage() {
   const latestWeight = weights[0];
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen bg-[linear-gradient(180deg,#f7faf7_0%,#f2f6f2_100%)] text-foreground">
       <div className="mx-auto flex min-h-screen max-w-[1440px]">
-        <aside className="hidden w-64 shrink-0 border-r border-border/70 bg-card px-5 py-7 lg:flex lg:flex-col">
+        <aside className="hidden w-64 shrink-0 border-r border-black/[.055] bg-[#fbfcfa] px-5 py-7 lg:flex lg:flex-col">
           <Brand />
           <Navigation view={view} setView={setView} />
           <div className="mt-auto rounded-2xl border border-border bg-secondary/50 p-4">
@@ -203,7 +232,7 @@ export default function HomePage() {
             <LogOut className="size-4 text-muted-foreground" />
           </button>
         </aside>
-        <section className="min-w-0 flex-1 pb-28 lg:pb-10">
+        <section className="min-w-0 flex-1 pb-[calc(6.25rem+env(safe-area-inset-bottom))] lg:pb-10">
           <AppHeader
             view={view}
             selectedDate={selectedDate}
@@ -227,7 +256,11 @@ export default function HomePage() {
                   goal={goal}
                   steps={daySteps}
                   latestWeight={latestWeight}
+                  savedFoods={savedFoods}
+                  date={selectedDate}
+                  userId={user.id}
                   onAdd={() => setMealModal('new')}
+                  onManageSaved={setSavedFoodModal}
                   onEdit={setMealModal}
                   onSaved={() => loadData(user)}
                 />
@@ -278,6 +311,17 @@ export default function HomePage() {
           }}
         />
       )}
+      {savedFoodModal && (
+        <SavedFoodModal
+          value={savedFoodModal === 'new' ? null : savedFoodModal}
+          userId={user.id}
+          onClose={() => setSavedFoodModal(null)}
+          onSaved={() => {
+            setSavedFoodModal(null);
+            void loadData(user);
+          }}
+        />
+      )}
     </main>
   );
 }
@@ -304,14 +348,14 @@ function Navigation({
 }) {
   if (mobile)
     return (
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-border bg-card/95 px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-black/[.06] bg-white/95 px-2 pb-[max(9px,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_35px_rgba(26,54,43,.06)] backdrop-blur-xl lg:hidden">
         {nav.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setView(id)}
-            className={`flex flex-col items-center gap-1 rounded-xl py-1.5 text-[11px] font-medium ${view === id ? 'text-primary' : 'text-muted-foreground'}`}
+            className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-2xl text-[11px] font-semibold transition active:scale-95 ${view === id ? 'bg-primary/[.08] text-primary' : 'text-muted-foreground'}`}
           >
-            <Icon className="size-5" />
+            <Icon className="size-[21px]" strokeWidth={view === id ? 2.5 : 2} />
             {label}
           </button>
         ))}
@@ -350,25 +394,25 @@ function AppHeader({
   };
   const today = singaporeDate();
   return (
-    <header className="flex min-h-[76px] items-center justify-between border-b border-border/60 bg-background/90 px-5 backdrop-blur sm:px-8 lg:px-12">
+    <header className="sticky top-0 z-30 flex min-h-[72px] items-center justify-between border-b border-black/[.045] bg-[#f7faf7]/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:px-8 lg:static lg:px-12 lg:pt-0">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[.16em] text-primary">
+        <p className="text-[10px] font-bold uppercase tracking-[.17em] text-primary">
           {view === 'today' ? readableDate(today) : 'Calorie Chat'}
         </p>
-        <h1 className="mt-1 text-xl font-bold tracking-tight">
+        <h1 className="mt-0.5 text-[22px] font-extrabold tracking-[-.035em]">
           {titles[view]}
         </h1>
       </div>
       {(view === 'today' || view === 'history') && (
         <label className="relative">
-          <CalendarDays className="pointer-events-none absolute left-3 top-3 size-4" />
+          <CalendarDays className="pointer-events-none absolute left-3 top-3.5 size-4 text-primary" />
           <input
             aria-label="Selected date"
             type="date"
             value={selectedDate}
             max={today}
             onChange={(event) => setSelectedDate(event.target.value)}
-            className="h-10 rounded-xl border bg-card pl-9 pr-3 text-sm font-medium"
+            className="h-11 w-[136px] rounded-2xl border border-black/[.06] bg-white pl-9 pr-2 text-[13px] font-semibold shadow-sm sm:w-auto sm:pr-3"
           />
         </label>
       )}
@@ -382,7 +426,11 @@ function TodayView({
   goal,
   steps,
   latestWeight,
+  savedFoods,
+  date,
+  userId,
   onAdd,
+  onManageSaved,
   onEdit,
   onSaved,
 }: {
@@ -391,54 +439,81 @@ function TodayView({
   goal: number;
   steps: number;
   latestWeight?: WeightEntry;
+  savedFoods: SavedFood[];
+  date: string;
+  userId: string;
   onAdd: () => void;
+  onManageSaved: (food: SavedFood | 'new') => void;
   onEdit: (meal: Meal) => void;
   onSaved: () => void;
 }) {
   const percent = Math.min(100, Math.round((eaten / goal) * 100));
   return (
-    <div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 sm:px-8 lg:grid-cols-[1.25fr_.75fr] lg:px-12 lg:py-9">
-      <div className="space-y-6">
-        <section className="rounded-[28px] border border-border bg-card p-5 shadow-[0_12px_38px_rgba(24,59,47,.07)] sm:p-7">
-          <div className="flex items-start justify-between">
+    <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-6 pt-3 sm:px-8 sm:pt-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(340px,.85fr)] lg:gap-7 lg:px-12 lg:py-9">
+      <div className="min-w-0 space-y-6">
+        <section className="relative overflow-hidden rounded-[2rem] bg-[#153b30] px-5 pb-5 pt-5 text-white shadow-[0_22px_55px_rgba(14,54,41,.2)] sm:px-7 sm:pb-7">
+          <div className="pointer-events-none absolute -right-14 -top-16 size-52 rounded-full bg-[#55bf85]/20 blur-2xl" />
+          <div className="relative flex items-center justify-between">
             <div>
-              <p className="text-sm font-semibold text-muted-foreground">
-                Today’s calories
+              <p className="text-[11px] font-bold uppercase tracking-[.18em] text-[#9fdbbb]">
+                Daily energy
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-1 text-sm text-white/65">
                 {eaten <= goal
-                  ? 'Your daily goal is on track'
-                  : `${eaten - goal} kcal over your goal`}
+                  ? 'You’re right on track'
+                  : `${eaten - goal} kcal over goal`}
               </p>
             </div>
-            <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-semibold backdrop-blur">
               {Math.round((eaten / goal) * 100)}%
             </span>
           </div>
-          <div className="mt-7 grid items-center gap-7 sm:grid-cols-[210px_1fr]">
-            <CalorieRing eaten={eaten} goal={goal} percent={percent} />
-            <div>
-              <p
-                className={`text-4xl font-bold tracking-[-0.05em] ${eaten > goal ? 'text-orange-600' : 'text-primary'}`}
-              >
+          <div className="relative mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:mt-5 sm:grid-cols-[1fr_210px_1fr]">
+            <div className="hidden sm:block">
+              <p className="text-3xl font-bold tracking-[-0.05em]">{eaten}</p>
+              <p className="mt-1 text-xs text-white/55">eaten today</p>
+            </div>
+            <CalorieRing eaten={eaten} goal={goal} percent={percent} dark />
+            <div className="pr-2 text-right sm:pr-0">
+              <p className="text-3xl font-bold tracking-[-0.05em]">
                 {Math.abs(goal - eaten)}
               </p>
-              <p className="mt-1 text-sm font-semibold">
-                kcal {eaten > goal ? 'over' : 'remaining'}
+              <p className="mt-1 text-xs text-white/55">
+                kcal {eaten > goal ? 'over' : 'left'}
               </p>
-              <p className="mt-3 max-w-xs text-sm leading-6 text-muted-foreground">
-                Log meals naturally, then review the estimate before saving.
-              </p>
-              <Button onClick={onAdd} className="mt-5 h-11 rounded-xl px-5">
-                <Plus className="size-4" /> Add a meal
-              </Button>
             </div>
           </div>
+          <div className="relative mt-3 grid grid-cols-2 gap-2.5 border-t border-white/10 pt-4 sm:mt-4">
+            <button
+              onClick={onAdd}
+              className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-white font-bold text-[#153b30] transition active:scale-[.98]"
+            >
+              <Plus className="size-[18px]" /> Manual log
+            </button>
+            <button
+              onClick={() => onManageSaved('new')}
+              className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 font-bold text-white transition active:scale-[.98]"
+            >
+              <BookmarkPlus className="size-[18px]" /> Save a food
+            </button>
+          </div>
         </section>
+        <QuickFoods
+          foods={savedFoods}
+          date={date}
+          userId={userId}
+          onManage={onManageSaved}
+          onSaved={onSaved}
+        />
+        <div className="lg:hidden">
+          <ChatCard onSaved={onSaved} />
+        </div>
         <MealList meals={meals} onEdit={onEdit} />
       </div>
-      <div className="space-y-6">
-        <ChatCard onSaved={onSaved} />
+      <div className="min-w-0 space-y-5 lg:sticky lg:top-6 lg:self-start">
+        <div className="hidden lg:block">
+          <ChatCard onSaved={onSaved} />
+        </div>
         <section className="grid grid-cols-2 gap-3">
           <MetricCard
             icon={Utensils}
@@ -467,17 +542,143 @@ function TodayView({
   );
 }
 
+function QuickFoods({
+  foods,
+  date,
+  userId,
+  onManage,
+  onSaved,
+}: {
+  foods: SavedFood[];
+  date: string;
+  userId: string;
+  onManage: (food: SavedFood | 'new') => void;
+  onSaved: () => void;
+}) {
+  const [adding, setAdding] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
+  async function logFood(food: SavedFood) {
+    setAdding(food.id);
+    setNotice('');
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('meals').insert({
+      user_id: userId,
+      date,
+      consumed_at: now,
+      meal_type: food.meal_type,
+      food_name: food.food_name,
+      quantity: food.quantity,
+      calories: food.calories,
+      confidence: 'high',
+      notes: food.notes,
+      source: 'saved_food',
+    });
+    if (!error) {
+      await supabase
+        .from('saved_foods')
+        .update({
+          times_logged: food.times_logged + 1,
+          last_used_at: now,
+          updated_at: now,
+        })
+        .eq('id', food.id);
+      setNotice(`${food.food_name} added · ${food.calories} kcal`);
+      onSaved();
+    } else {
+      setNotice(error.message);
+    }
+    setAdding(null);
+  }
+  return (
+    <section>
+      <div className="mb-3 flex items-end justify-between px-1">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[.16em] text-primary">
+            One-tap log
+          </p>
+          <h2 className="mt-1 text-xl font-bold tracking-[-0.025em]">
+            Your usuals
+          </h2>
+        </div>
+        {foods.length > 0 && (
+          <button
+            onClick={() => onManage('new')}
+            className="min-h-11 px-1 text-sm font-semibold text-primary"
+          >
+            + New
+          </button>
+        )}
+      </div>
+      <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {foods.map((food) => (
+          <div
+            key={food.id}
+            className="relative w-[142px] shrink-0 snap-start rounded-[1.4rem] border border-black/[.055] bg-card p-3.5 shadow-[0_8px_28px_rgba(32,60,49,.06)]"
+          >
+            <button
+              onClick={() => onManage(food)}
+              aria-label={`Edit ${food.food_name}`}
+              className="absolute right-2.5 top-2.5 grid size-8 place-items-center rounded-full text-muted-foreground hover:bg-muted"
+            >
+              <MoreHorizontal className="size-4" />
+            </button>
+            <span className="grid size-11 place-items-center rounded-2xl bg-[#eef7f1] text-xl">
+              {mealIcons[food.meal_type]}
+            </span>
+            <p className="mt-3 line-clamp-2 min-h-10 text-sm font-bold leading-5">
+              {food.food_name}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {food.calories} kcal
+            </p>
+            <button
+              onClick={() => void logFood(food)}
+              disabled={adding === food.id}
+              className="mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-[#e2f3e8] text-xs font-bold text-[#17613f] transition active:scale-[.97] disabled:opacity-60"
+            >
+              {adding === food.id ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <Plus className="size-4" />
+              )}{' '}
+              Add
+            </button>
+          </div>
+        ))}
+        <button
+          onClick={() => onManage('new')}
+          className="flex min-h-[180px] w-[126px] shrink-0 snap-start flex-col items-center justify-center rounded-[1.4rem] border border-dashed border-primary/30 bg-primary/[.035] text-center text-primary"
+        >
+          <span className="grid size-11 place-items-center rounded-full bg-primary/10">
+            <Plus className="size-5" />
+          </span>
+          <span className="mt-3 px-2 text-sm font-bold">
+            {foods.length ? 'Save another' : 'Save your coffee'}
+          </span>
+        </button>
+      </div>
+      {notice && (
+        <p className="mt-2 rounded-xl bg-primary/10 px-3 py-2 text-xs font-medium text-primary">
+          {notice}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function CalorieRing({
   eaten,
   goal,
   percent,
+  dark = false,
 }: {
   eaten: number;
   goal: number;
   percent: number;
+  dark?: boolean;
 }) {
   return (
-    <div className="relative mx-auto size-[190px]">
+    <div className="relative mx-auto size-[152px] sm:size-[190px]">
       <svg
         className="size-full -rotate-90"
         viewBox="0 0 120 120"
@@ -488,25 +689,29 @@ function CalorieRing({
           cy="60"
           r="51"
           fill="none"
-          stroke="var(--muted)"
-          strokeWidth="10"
+          stroke={dark ? 'rgba(255,255,255,.12)' : 'var(--muted)'}
+          strokeWidth="8"
         />
         <circle
           cx="60"
           cy="60"
           r="51"
           fill="none"
-          stroke="var(--primary)"
-          strokeWidth="10"
+          stroke={dark ? '#72d39c' : 'var(--primary)'}
+          strokeWidth="8"
           strokeLinecap="round"
           pathLength="100"
           strokeDasharray={`${percent} 100`}
         />
       </svg>
       <div className="absolute inset-0 grid place-content-center text-center">
-        <strong className="text-4xl tracking-[-0.05em]">{eaten}</strong>
-        <span className="mt-1 text-xs font-medium text-muted-foreground">
-          of {goal} kcal
+        <strong className="text-3xl tracking-[-0.05em] sm:text-4xl">
+          {eaten}
+        </strong>
+        <span
+          className={`mt-1 text-[11px] font-medium ${dark ? 'text-white/55' : 'text-muted-foreground'}`}
+        >
+          of {goal}
         </span>
       </div>
     </div>
@@ -532,48 +737,51 @@ function MealList({
           </p>
         </div>
       </div>
-      <div className="space-y-3">
-        {meals.length === 0 && (
-          <div className="rounded-2xl border border-dashed bg-card/60 p-8 text-center">
+      {meals.length === 0 ? (
+        <div className="rounded-[1.6rem] border border-dashed border-primary/20 bg-white/70 p-8 text-center">
+          <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-secondary text-xl">
+            🍽️
+          </span>
+          <div className="mt-3">
             <p className="font-semibold">Your plate is clear</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Add a meal or describe it to Calorie Chat.
             </p>
           </div>
-        )}
-        {meals.map((meal) => (
-          <button
-            key={meal.id}
-            onClick={() => onEdit(meal)}
-            className="group flex w-full items-center gap-4 rounded-2xl border border-border bg-card p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md"
-          >
-            <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-secondary text-xl">
-              {mealIcons[meal.meal_type]}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground">
-                {mealLabels[meal.meal_type]}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-[1.6rem] border border-black/[.055] bg-card shadow-[0_8px_30px_rgba(32,60,49,.045)]">
+          {meals.map((meal, index) => (
+            <button
+              key={meal.id}
+              onClick={() => onEdit(meal)}
+              className={`group flex min-h-[82px] w-full items-center gap-3.5 px-4 py-3.5 text-left transition active:bg-secondary/70 sm:px-5 ${index ? 'border-t border-black/[.055]' : ''}`}
+            >
+              <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-[#f0f7f2] text-xl">
+                {mealIcons[meal.meal_type]}
               </span>
-              <span className="mt-1 block truncate font-semibold">
-                {meal.food_name}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-bold tracking-[-0.01em]">
+                  {meal.food_name}
+                </span>
+                <span className="mt-1 block truncate text-xs text-muted-foreground">
+                  {mealLabels[meal.meal_type]} ·{' '}
+                  {meal.quantity !== 1 ? `×${meal.quantity} · ` : ''}
+                  {new Date(meal.consumed_at).toLocaleTimeString('en-SG', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                </span>
               </span>
-              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                {meal.quantity !== 1 ? `×${meal.quantity} · ` : ''}
-                {new Date(meal.consumed_at).toLocaleTimeString('en-SG', {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
-                {meal.source !== 'manual' ? ' · AI estimate' : ''}
+              <span className="text-right">
+                <strong className="block text-[15px]">{meal.calories}</strong>
+                <span className="text-[11px] text-muted-foreground">kcal</span>
               </span>
-            </span>
-            <span className="text-right">
-              <strong className="block text-base">{meal.calories}</strong>
-              <span className="text-xs text-muted-foreground">kcal</span>
-            </span>
-            <ChevronRight className="size-4 text-muted-foreground" />
-          </button>
-        ))}
-      </div>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -629,23 +837,28 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
     setBusy(false);
   }
   return (
-    <section className="rounded-[28px] border border-primary/15 bg-[linear-gradient(150deg,var(--card),var(--secondary))] p-5 sm:p-6">
+    <section className="rounded-[2rem] border border-black/[.055] bg-white p-5 shadow-[0_14px_45px_rgba(32,60,49,.06)] sm:p-6">
       <div className="flex items-center gap-3">
-        <span className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground">
+        <span className="grid size-11 place-items-center rounded-2xl bg-[#153b30] text-white shadow-[0_8px_24px_rgba(21,59,48,.18)]">
           <Sparkles className="size-5" />
         </span>
-        <div>
-          <h2 className="font-bold">Log with Calorie Chat</h2>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="font-bold">Ask Cal</h2>
+            <span className="rounded-full bg-[#e5f4ea] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#17613f]">
+              AI estimate
+            </span>
+          </div>
           <p className="text-xs text-muted-foreground">
-            Describe your meal naturally
+            Say what you ate, just as you would text it
           </p>
         </div>
       </div>
       {!estimate && (
-        <div className="mt-5 rounded-2xl rounded-bl-md bg-card p-4 text-sm leading-6 shadow-sm">
-          <p className="font-medium">What did you eat?</p>
-          <p className="mt-1 text-muted-foreground">
-            Try “I had chicken rice and a milk tea, normal sugar.”
+        <div className="mt-5 rounded-2xl rounded-bl-md bg-[#f1f7f3] px-4 py-3.5 text-sm leading-6">
+          <p className="font-semibold text-[#24493a]">What did you eat?</p>
+          <p className="text-muted-foreground">
+            Try “chicken rice and milk tea, normal sugar”
           </p>
         </div>
       )}
@@ -689,21 +902,22 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
           {error}
         </p>
       )}
-      <form className="mt-4 flex gap-2" onSubmit={estimateMeal}>
+      <form className="mt-4 flex items-end gap-2" onSubmit={estimateMeal}>
         <label className="sr-only" htmlFor="meal-chat">
           Describe your meal
         </label>
-        <input
+        <textarea
           id="meal-chat"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder="I just ate…"
-          className="min-w-0 flex-1 rounded-xl border border-input bg-card px-4 text-sm outline-none ring-primary/20 transition focus:ring-4"
+          rows={1}
+          className="min-h-12 min-w-0 flex-1 resize-none rounded-2xl border border-input bg-[#fbfdfb] px-4 py-3 text-base leading-6 outline-none ring-primary/15 transition focus:ring-4 sm:text-sm"
         />
         <Button
           type="submit"
           size="icon-lg"
-          className="size-11 rounded-xl"
+          className="size-12 rounded-2xl"
           disabled={busy}
           aria-label="Estimate meal"
         >
@@ -1068,6 +1282,186 @@ function SettingsView({
   );
 }
 
+function SavedFoodModal({
+  value,
+  userId,
+  onClose,
+  onSaved,
+}: {
+  value: SavedFood | null;
+  userId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(value?.food_name ?? '');
+  const [type, setType] = useState<MealType>(value?.meal_type ?? 'drink');
+  const [calories, setCalories] = useState(value?.calories.toString() ?? '');
+  const [quantity, setQuantity] = useState(value?.quantity.toString() ?? '1');
+  const [notes, setNotes] = useState(value?.notes ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event: FormSubmitEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    const payload = {
+      user_id: userId,
+      food_name: name.trim(),
+      meal_type: type,
+      quantity: Number(quantity),
+      calories: Number(calories),
+      notes: notes.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+    const result = value
+      ? await supabase.from('saved_foods').update(payload).eq('id', value.id)
+      : await supabase.from('saved_foods').insert(payload);
+    if (result.error) {
+      setError(
+        result.error.code === '23505'
+          ? 'You already have a saved food with this name.'
+          : result.error.message,
+      );
+      setBusy(false);
+      return;
+    }
+    onSaved();
+  }
+
+  async function remove() {
+    if (!value) return;
+    setBusy(true);
+    setError('');
+    const { error: deleteError } = await supabase
+      .from('saved_foods')
+      .delete()
+      .eq('id', value.id);
+    if (deleteError) {
+      setError(deleteError.message);
+      setBusy(false);
+      return;
+    }
+    onSaved();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-end bg-[#102e25]/50 backdrop-blur-sm sm:place-items-center sm:p-6">
+      <form
+        onSubmit={submit}
+        className="max-h-[94dvh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-card px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-5 shadow-2xl sm:rounded-[2rem] sm:p-7"
+      >
+        <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-border sm:hidden" />
+        <div className="flex items-center gap-3">
+          <span className="grid size-11 place-items-center rounded-2xl bg-[#e6f4eb] text-primary">
+            <Coffee className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xl font-bold tracking-[-0.025em]">
+              {value ? 'Edit saved food' : 'Save a usual'}
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Add it to today with one tap next time.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close"
+            className="size-11 rounded-full"
+          >
+            <X />
+          </Button>
+        </div>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <Field label="Food or drink" wide>
+            <input
+              required
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Morning coffee"
+            />
+          </Field>
+          <Field label="Type">
+            <select
+              value={type}
+              onChange={(event) => setType(event.target.value as MealType)}
+            >
+              {Object.entries(mealLabels).map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Calories">
+            <input
+              required
+              type="number"
+              inputMode="numeric"
+              min="0"
+              value={calories}
+              onChange={(event) => setCalories(event.target.value)}
+              placeholder="120"
+            />
+          </Field>
+          <Field label="Quantity">
+            <input
+              required
+              type="number"
+              inputMode="decimal"
+              min="0.01"
+              step="0.01"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+            />
+          </Field>
+          <Field label="Notes (optional)" wide>
+            <textarea
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              rows={2}
+              placeholder="Oat milk, no sugar"
+            />
+          </Field>
+        </div>
+        {error && (
+          <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+        <div className="mt-6 flex gap-2">
+          {value && (
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={remove}
+              disabled={busy}
+              className="h-12 rounded-2xl"
+            >
+              <Trash2 /> Delete
+            </Button>
+          )}
+          <Button
+            type="submit"
+            className="ml-auto h-12 rounded-2xl px-6"
+            disabled={busy}
+          >
+            {busy ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <BookmarkPlus />
+            )}
+            {value ? 'Save changes' : 'Save to usuals'}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function MealModal({
   value,
   date,
@@ -1088,6 +1482,7 @@ function MealModal({
   const [low, setLow] = useState(value?.calorie_low?.toString() ?? '');
   const [high, setHigh] = useState(value?.calorie_high?.toString() ?? '');
   const [notes, setNotes] = useState(value?.notes ?? '');
+  const [saveAsUsual, setSaveAsUsual] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   async function submit(event: FormSubmitEvent) {
@@ -1111,8 +1506,25 @@ function MealModal({
     const result = value
       ? await supabase.from('meals').update(payload).eq('id', value.id)
       : await supabase.from('meals').insert(payload);
-    if (result.error) setError(result.error.message);
-    else onSaved();
+    if (result.error) {
+      setError(result.error.message);
+      setBusy(false);
+      return;
+    }
+    if (!value && saveAsUsual) {
+      const usualResult = await supabase.from('saved_foods').insert({
+        user_id: userId,
+        food_name: name.trim(),
+        meal_type: type,
+        quantity: Number(quantity),
+        calories: Number(calories),
+        notes: notes.trim() || null,
+      });
+      if (usualResult.error && usualResult.error.code !== '23505') {
+        console.error('Could not save usual food:', usualResult.error.message);
+      }
+    }
+    onSaved();
     setBusy(false);
   }
   async function remove() {
@@ -1130,8 +1542,9 @@ function MealModal({
     <div className="fixed inset-0 z-50 grid place-items-end bg-[#153a2d]/45 p-0 backdrop-blur-sm sm:place-items-center sm:p-6">
       <form
         onSubmit={submit}
-        className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-[28px] bg-card p-6 shadow-2xl sm:rounded-[28px]"
+        className="max-h-[94dvh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-card px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-5 shadow-2xl sm:rounded-[2rem] sm:p-7"
       >
+        <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-border sm:hidden" />
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold">
@@ -1141,7 +1554,14 @@ function MealModal({
               {readableDate(date)}
             </p>
           </div>
-          <Button type="button" variant="ghost" size="icon" onClick={onClose}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close"
+            className="size-11 rounded-full"
+          >
             <X />
           </Button>
         </div>
@@ -1170,6 +1590,7 @@ function MealModal({
             <input
               required
               type="number"
+              inputMode="numeric"
               min="0"
               value={calories}
               onChange={(event) => setCalories(event.target.value)}
@@ -1179,6 +1600,7 @@ function MealModal({
             <input
               required
               type="number"
+              inputMode="decimal"
               min="0.01"
               step="0.01"
               value={quantity}
@@ -1210,7 +1632,33 @@ function MealModal({
             />
           </Field>
         </div>
-        {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+        {!value && (
+          <div className="mt-5 flex min-h-14 items-center gap-3 rounded-2xl border border-primary/15 bg-[#f0f8f3] px-4 py-3">
+            <input
+              id="save-as-usual"
+              type="checkbox"
+              checked={saveAsUsual}
+              onChange={(event) => setSaveAsUsual(event.target.checked)}
+              className="size-5 accent-primary"
+            />
+            <label
+              htmlFor="save-as-usual"
+              className="min-w-0 flex-1 cursor-pointer"
+            >
+              <span className="block text-sm font-bold">
+                Save to Your usuals
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                Log this same item with one tap next time.
+              </span>
+            </label>
+          </div>
+        )}
+        {error && (
+          <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </p>
+        )}
         <div className="mt-6 flex gap-2">
           {value && (
             <Button
@@ -1218,11 +1666,16 @@ function MealModal({
               variant="destructive"
               onClick={remove}
               disabled={busy}
+              className="h-12 rounded-2xl"
             >
               <Trash2 /> Delete
             </Button>
           )}
-          <Button type="submit" className="ml-auto h-10 px-5" disabled={busy}>
+          <Button
+            type="submit"
+            className="ml-auto h-12 rounded-2xl px-5"
+            disabled={busy}
+          >
             {busy ? <LoaderCircle className="animate-spin" /> : <Pencil />}{' '}
             {value ? 'Save changes' : 'Add meal'}
           </Button>
@@ -1273,8 +1726,8 @@ function AuthScreen() {
     setBusy(false);
   }
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dff4e7,transparent_42%),var(--background)] p-5">
-      <div className="mx-auto grid min-h-[calc(100vh-40px)] max-w-5xl items-center gap-10 lg:grid-cols-2">
+    <main className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#dff4e7,transparent_42%),var(--background)] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:p-5">
+      <div className="mx-auto grid min-h-[calc(100dvh-2rem)] max-w-5xl items-center gap-10 sm:min-h-[calc(100dvh-40px)] lg:grid-cols-2">
         <section className="hidden lg:block">
           <Brand />
           <p className="mt-20 text-sm font-semibold uppercase tracking-[.18em] text-primary">
@@ -1290,7 +1743,7 @@ function AuthScreen() {
         </section>
         <form
           onSubmit={submit}
-          className="mx-auto w-full max-w-md rounded-[30px] border bg-card p-7 shadow-[0_24px_70px_rgba(24,59,47,.12)] sm:p-9"
+          className="mx-auto w-full max-w-md rounded-[2rem] border border-black/[.055] bg-card p-6 shadow-[0_24px_70px_rgba(24,59,47,.12)] sm:p-9"
         >
           <div className="lg:hidden">
             <Brand />
@@ -1346,7 +1799,7 @@ function AuthScreen() {
               setMode(mode === 'login' ? 'signup' : 'login');
               setMessage('');
             }}
-            className="mt-5 w-full text-sm font-semibold text-primary"
+            className="mt-3 min-h-11 w-full rounded-xl text-sm font-semibold text-primary"
           >
             {mode === 'login'
               ? 'New here? Create an account'
