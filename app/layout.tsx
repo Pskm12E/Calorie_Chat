@@ -47,6 +47,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
+        data-demo-login-id={process.env.DEMO_LOGIN_ID}
+        data-demo-login-password={process.env.DEMO_LOGIN_PASSWORD}
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
