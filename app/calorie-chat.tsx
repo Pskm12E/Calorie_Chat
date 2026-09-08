@@ -1,11 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import type { User } from '@supabase/supabase-js';
 import {
   Apple,
   BookmarkPlus,
   Calculator,
+  Camera,
   CalendarDays,
   ChartNoAxesCombined,
   ChevronLeft,
@@ -15,6 +17,7 @@ import {
   History,
   Home,
   HeartPulse,
+  Images,
   LoaderCircle,
   LogOut,
   MoreHorizontal,
@@ -76,6 +79,10 @@ type Estimate = {
   reply: string;
   follow_up: string | null;
   meals: EstimateMeal[];
+};
+type PendingPhoto = {
+  dataUrl: string;
+  name: string;
 };
 type FormSubmitEvent = Parameters<
   NonNullable<React.ComponentProps<'form'>['onSubmit']>
@@ -166,6 +173,41 @@ function accountLabel(user: User) {
   return email.endsWith(`@${USER_ID_DOMAIN}`)
     ? email.slice(0, -(USER_ID_DOMAIN.length + 1))
     : email;
+}
+
+async function prepareMealPhoto(file: File): Promise<PendingPhoto> {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Choose an image file.');
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    throw new Error('That photo is too large. Choose one under 20 MB.');
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new window.Image();
+      element.onload = () => resolve(element);
+      element.onerror = () =>
+        reject(new Error('That photo could not be read.'));
+      element.src = objectUrl;
+    });
+    const longestSide = Math.max(image.naturalWidth, image.naturalHeight);
+    const scale = Math.min(1, 1600 / longestSide);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('This browser could not prepare the photo.');
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    if (dataUrl.length > 6_000_000) {
+      throw new Error('That photo is still too large. Try a smaller image.');
+    }
+    return { dataUrl, name: file.name || 'Meal photo' };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 export default function CalorieChat() {
@@ -915,30 +957,63 @@ function MealList({
 
 function ChatCard({ onSaved }: { onSaved: () => void }) {
   const [message, setMessage] = useState('');
+  const [photo, setPhoto] = useState<PendingPhoto | null>(null);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [busy, setBusy] = useState(false);
+  const [preparingPhoto, setPreparingPhoto] = useState(false);
   const [error, setError] = useState('');
+  const cameraInput = useRef<HTMLInputElement>(null);
+  const libraryInput = useRef<HTMLInputElement>(null);
+
+  async function selectPhoto(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setPreparingPhoto(true);
+    setError('');
+    try {
+      setPhoto(await prepareMealPhoto(file));
+      setEstimate(null);
+    } catch (photoError) {
+      setError(
+        photoError instanceof Error
+          ? photoError.message
+          : 'That photo could not be prepared.',
+      );
+    } finally {
+      setPreparingPhoto(false);
+    }
+  }
+
   async function estimateMeal(event: FormSubmitEvent) {
     event.preventDefault();
-    if (!message.trim()) return;
+    if (!message.trim() && !photo) return;
     setBusy(true);
     setError('');
     setEstimate(null);
-    const { data } = await supabase.auth.getSession();
-    const response = await fetch('/api/estimate', {
-      method: 'POST',
-      headers: authHeaders(data.session?.access_token ?? ''),
-      body: JSON.stringify({ message }),
-    });
-    const result = (await response.json()) as Estimate & { error?: string };
-    if (!response.ok)
-      setError(
-        result.error === 'AI_SETUP_REQUIRED'
-          ? 'Add your OpenAI API key to turn on AI estimates.'
-          : (result.error ?? 'Unable to estimate this meal.'),
-      );
-    else setEstimate(result);
-    setBusy(false);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const response = await fetch('/api/estimate', {
+        method: 'POST',
+        headers: authHeaders(data.session?.access_token ?? ''),
+        body: JSON.stringify({
+          message: message.trim(),
+          image: photo?.dataUrl,
+        }),
+      });
+      const result = (await response.json()) as Estimate & { error?: string };
+      if (!response.ok)
+        setError(
+          result.error === 'AI_SETUP_REQUIRED'
+            ? 'Add your OpenAI API key to turn on AI estimates.'
+            : (result.error ?? 'Unable to estimate this meal.'),
+        );
+      else setEstimate(result);
+    } catch {
+      setError('Unable to reach the estimator. Please try again.');
+    } finally {
+      setBusy(false);
+    }
   }
   async function saveEstimate() {
     if (!estimate) return;
@@ -951,7 +1026,7 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
       user_id: data.user!.id,
       date: singaporeDate(),
       consumed_at: now.toISOString(),
-      source: 'chatgpt_text',
+      source: photo ? 'chatgpt_photo' : 'chatgpt_text',
       idempotency_key: crypto.randomUUID(),
     }));
     const { error: saveError } = await supabase.from('meals').insert(rows);
@@ -959,6 +1034,7 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
     else {
       setEstimate(null);
       setMessage('');
+      setPhoto(null);
       onSaved();
     }
     setBusy(false);
@@ -1029,6 +1105,85 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
           {error}
         </p>
       )}
+      <input
+        ref={cameraInput}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        onChange={selectPhoto}
+        aria-label="Take a food photo"
+      />
+      <input
+        ref={libraryInput}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        onChange={selectPhoto}
+        aria-label="Choose a food photo"
+      />
+      {photo ? (
+        <div className="mt-4 flex items-center gap-3 rounded-2xl border border-[#cfe1d8] bg-[#f7fbf8] p-2.5">
+          <div className="relative size-16 shrink-0 overflow-hidden rounded-xl shadow-sm">
+            <Image
+              src={photo.dataUrl}
+              alt="Meal selected for calorie estimation"
+              fill
+              unoptimized
+              className="object-cover"
+              sizes="64px"
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{photo.name}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Ready for Cal to inspect
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="shrink-0 rounded-xl"
+            onClick={() => {
+              setPhoto(null);
+              setEstimate(null);
+            }}
+            disabled={busy}
+            aria-label="Remove photo"
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-4 flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-10 flex-1 rounded-xl bg-[#fbfdfb]"
+            onClick={() => cameraInput.current?.click()}
+            disabled={busy || preparingPhoto}
+          >
+            {preparingPhoto ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <Camera />
+            )}
+            Take photo
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-10 flex-1 rounded-xl bg-[#fbfdfb]"
+            onClick={() => libraryInput.current?.click()}
+            disabled={busy || preparingPhoto}
+          >
+            <Images /> Choose photo
+          </Button>
+        </div>
+      )}
       <form className="mt-4 flex items-end gap-2" onSubmit={estimateMeal}>
         <label className="sr-only" htmlFor="meal-chat">
           Describe your meal
@@ -1037,7 +1192,7 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
           id="meal-chat"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
-          placeholder="I just ate…"
+          placeholder={photo ? 'Add a note (optional)…' : 'I just ate…'}
           rows={1}
           className="min-h-12 min-w-0 flex-1 resize-none rounded-2xl border border-input bg-[#fbfdfb] px-4 py-3 text-base leading-6 outline-none ring-primary/15 transition focus:ring-4 sm:text-sm"
         />
@@ -1045,15 +1200,17 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
           type="submit"
           size="icon-lg"
           className="size-12 rounded-2xl"
-          disabled={busy}
+          disabled={busy || preparingPhoto || (!message.trim() && !photo)}
           aria-label="Estimate meal"
         >
           {busy ? <LoaderCircle className="animate-spin" /> : <Send />}
         </Button>
       </form>
       <p className="mt-3 flex items-start gap-2 text-[11px] leading-4 text-muted-foreground">
-        <Sparkles className="mt-0.5 size-3 shrink-0" /> Estimates are never
-        saved until you review them.
+        <Sparkles className="mt-0.5 size-3 shrink-0" />{' '}
+        {photo
+          ? 'Your photo is used for this estimate and is not saved.'
+          : 'Estimates are never saved until you review them.'}
       </p>
     </section>
   );
