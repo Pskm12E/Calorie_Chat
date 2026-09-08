@@ -24,6 +24,7 @@ import {
   Send,
   Settings,
   Sparkles,
+  Target,
   Trash2,
   Utensils,
   X,
@@ -334,6 +335,7 @@ export default function CalorieChat() {
                   meals={dateMeals}
                   eaten={eaten}
                   goal={goal}
+                  settings={settings}
                   steps={daySteps}
                   latestWeight={latestWeight}
                   savedFoods={savedFoods}
@@ -343,6 +345,7 @@ export default function CalorieChat() {
                   onManageSaved={setSavedFoodModal}
                   onEdit={setMealModal}
                   onSaved={() => loadData(user)}
+                  onOpenPlan={() => setView('settings')}
                 />
               )}
               {view === 'history' && (
@@ -368,7 +371,6 @@ export default function CalorieChat() {
               )}
               {view === 'settings' && (
                 <SettingsView
-                  goal={goal}
                   settings={settings}
                   latestWeight={latestWeight}
                   userId={user.id}
@@ -507,6 +509,7 @@ function TodayView({
   meals,
   eaten,
   goal,
+  settings,
   steps,
   latestWeight,
   savedFoods,
@@ -516,10 +519,12 @@ function TodayView({
   onManageSaved,
   onEdit,
   onSaved,
+  onOpenPlan,
 }: {
   meals: Meal[];
   eaten: number;
   goal: number;
+  settings: UserSettings | null;
   steps: number;
   latestWeight?: WeightEntry;
   savedFoods: SavedFood[];
@@ -529,11 +534,50 @@ function TodayView({
   onManageSaved: (food: SavedFood | 'new') => void;
   onEdit: (meal: Meal) => void;
   onSaved: () => void;
+  onOpenPlan: () => void;
 }) {
   const percent = Math.min(100, Math.round((eaten / goal) * 100));
+  const savedPlan =
+    settings && latestWeight
+      ? calculateWeightLossEstimate({
+          weightKg: latestWeight.weight_kg,
+          heightCm: settings.height_cm ?? 0,
+          ageYears: settings.age_years ?? 0,
+          sex: settings.sex_for_equation ?? '',
+          activityLevel: settings.activity_level ?? '',
+          weeklyLossKg: settings.weekly_weight_loss_kg ?? 0,
+          targetWeightKg: settings.target_weight,
+        })
+      : null;
   return (
     <div className="mx-auto grid max-w-6xl gap-5 px-4 pb-6 pt-3 sm:px-8 sm:pt-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(340px,.85fr)] lg:gap-7 lg:px-12 lg:py-9">
       <div className="min-w-0 space-y-6">
+        <button
+          type="button"
+          onClick={onOpenPlan}
+          className="flex w-full items-center gap-3 rounded-2xl border border-primary/15 bg-white p-4 text-left shadow-[0_10px_28px_rgba(28,70,54,.06)] transition hover:border-primary/30 active:scale-[.99]"
+        >
+          <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-secondary text-primary">
+            <Target className="size-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-bold uppercase tracking-[.14em] text-primary">
+              {savedPlan ? 'Your calorie goal' : 'Current calorie goal'}
+            </span>
+            <span className="mt-0.5 block text-2xl font-extrabold tracking-[-.04em]">
+              {goal.toLocaleString()}{' '}
+              <span className="text-sm font-semibold tracking-normal text-muted-foreground">
+                kcal/day
+              </span>
+            </span>
+            <span className="mt-1 block text-xs text-muted-foreground">
+              {savedPlan
+                ? `About ${savedPlan.maintenanceCalories.toLocaleString()} to maintain · ~${savedPlan.expectedWeeklyLoss} kg/week`
+                : 'Tap to calculate a personal goal from your weight and height'}
+            </span>
+          </span>
+          <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
+        </button>
         <section className="relative overflow-hidden rounded-[2rem] bg-[#153b30] px-5 pb-5 pt-5 text-white shadow-[0_22px_55px_rgba(14,54,41,.2)] sm:px-7 sm:pb-7">
           <div className="pointer-events-none absolute -right-14 -top-16 size-52 rounded-full bg-[#55bf85]/20 blur-2xl" />
           <div className="relative flex items-center justify-between">
@@ -1351,7 +1395,6 @@ function calculateWeightLossEstimate({
 }
 
 function SettingsView({
-  goal,
   settings,
   latestWeight,
   userId,
@@ -1359,7 +1402,6 @@ function SettingsView({
   onSaved,
   onSignOut,
 }: {
-  goal: number;
   settings: UserSettings | null;
   latestWeight: WeightEntry | undefined;
   userId: string;
@@ -1367,7 +1409,6 @@ function SettingsView({
   onSaved: () => void;
   onSignOut: () => void;
 }) {
-  const [newGoal, setNewGoal] = useState(goal.toString());
   const [currentWeight, setCurrentWeight] = useState(
     latestWeight?.weight_kg.toString() ?? '',
   );
@@ -1409,6 +1450,7 @@ function SettingsView({
 
     setSaving(true);
     const now = new Date().toISOString();
+    const calorieGoal = estimate.suggestedCalories;
     const shouldLogWeight =
       !latestWeight ||
       Math.abs(latestWeight.weight_kg - Number(currentWeight)) >= 0.05;
@@ -1422,7 +1464,7 @@ function SettingsView({
     const [settingsResult, goalResult, weightResult] = await Promise.all([
       supabase.from('user_settings').upsert({
         user_id: userId,
-        daily_calorie_goal: Number(newGoal),
+        daily_calorie_goal: calorieGoal,
         timezone: 'Asia/Singapore',
         target_weight: target ? Number(target) : null,
         height_cm: Number(height),
@@ -1436,7 +1478,7 @@ function SettingsView({
         {
           user_id: userId,
           effective_date: singaporeDate(),
-          calorie_goal: Number(newGoal),
+          calorie_goal: calorieGoal,
         },
         { onConflict: 'user_id,effective_date' },
       ),
@@ -1577,33 +1619,21 @@ function SettingsView({
 
           {estimate ? (
             <div className="mt-7 rounded-3xl bg-[#183f32] p-5 text-white sm:p-6">
-              <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[.14em] text-emerald-200">
-                    Suggested daily target
-                  </p>
-                  <p className="mt-1 text-4xl font-bold tracking-[-.05em]">
-                    {estimate.suggestedCalories.toLocaleString()}
-                    <span className="ml-2 text-base font-medium tracking-normal text-emerald-100">
-                      kcal/day
-                    </span>
-                  </p>
-                  <p className="mt-2 text-sm text-emerald-50/80">
-                    Maintenance is about{' '}
-                    {estimate.maintenanceCalories.toLocaleString()} kcal/day ·{' '}
-                    {estimate.dailyDeficit.toLocaleString()} kcal daily deficit
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="h-11 shrink-0 rounded-xl px-4"
-                  onClick={() =>
-                    setNewGoal(estimate.suggestedCalories.toString())
-                  }
-                >
-                  Use this target
-                </Button>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[.14em] text-emerald-200">
+                  Your calorie goal is
+                </p>
+                <p className="mt-1 text-4xl font-bold tracking-[-.05em]">
+                  {estimate.suggestedCalories.toLocaleString()}
+                  <span className="ml-2 text-base font-medium tracking-normal text-emerald-100">
+                    kcal/day
+                  </span>
+                </p>
+                <p className="mt-2 text-sm text-emerald-50/80">
+                  Maintenance is about{' '}
+                  {estimate.maintenanceCalories.toLocaleString()} kcal/day ·{' '}
+                  {estimate.dailyDeficit.toLocaleString()} kcal daily deficit
+                </p>
               </div>
               <div className="mt-5 grid gap-2 border-t border-white/10 pt-4 text-sm text-emerald-50/80 sm:grid-cols-2">
                 <p>Estimated pace: ~{estimate.expectedWeeklyLoss} kg/week</p>
@@ -1628,30 +1658,6 @@ function SettingsView({
             </div>
           )}
 
-          <div className="mt-7 border-t pt-7">
-            <h3 className="font-bold">Daily tracking target</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Use the suggestion above or choose your own target. Changes apply
-              from today; previous goals stay in your history.
-            </p>
-            <label className="mt-4 block text-sm font-semibold">
-              Daily calorie goal
-              <div className="mt-2 flex h-12 items-center rounded-xl border bg-background pr-4">
-                <input
-                  required
-                  type="number"
-                  inputMode="numeric"
-                  min="1200"
-                  max="10000"
-                  value={newGoal}
-                  onChange={(event) => setNewGoal(event.target.value)}
-                  className="min-w-0 flex-1 bg-transparent px-3 font-normal outline-none"
-                />
-                <span className="text-xs text-muted-foreground">kcal/day</span>
-              </div>
-            </label>
-          </div>
-
           {formError && (
             <p className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-red-700">
               {formError}
@@ -1659,11 +1665,15 @@ function SettingsView({
           )}
           <Button
             type="submit"
-            disabled={saving}
+            disabled={saving || !estimate}
             className="mt-6 h-12 w-full rounded-xl sm:w-auto sm:px-6"
           >
             {saving && <LoaderCircle className="animate-spin" />}
-            {saved ? 'Plan saved!' : 'Save my plan'}
+            {saved
+              ? `${estimate?.suggestedCalories.toLocaleString()} kcal is now your daily goal`
+              : estimate
+                ? `Save & use ${estimate.suggestedCalories.toLocaleString()} kcal goal`
+                : 'Complete your details first'}
           </Button>
         </div>
       </form>
