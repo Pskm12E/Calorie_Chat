@@ -286,6 +286,19 @@ export default function CalorieChat() {
     setLoading(false);
   }, []);
 
+  const openChat = useCallback(() => {
+    setView('today');
+    window.setTimeout(() => {
+      const chat = document.getElementById('ask-cal');
+      chat?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      window.setTimeout(
+        () =>
+          document.getElementById('meal-chat')?.focus({ preventScroll: true }),
+        450,
+      );
+    }, 0);
+  }, []);
+
   useEffect(() => {
     let prefillAttempts = 0;
     const prefillTimer = window.setInterval(() => {
@@ -328,11 +341,11 @@ export default function CalorieChat() {
   const latestWeight = weights[0];
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,#f7faf7_0%,#f2f6f2_100%)] text-foreground">
+    <main className="min-h-screen bg-[linear-gradient(180deg,#faf8ff_0%,#f4f1fb_100%)] text-foreground">
       <div className="mx-auto flex min-h-screen max-w-[1440px]">
-        <aside className="hidden w-64 shrink-0 border-r border-black/[.055] bg-[#fbfcfa] px-5 py-7 lg:flex lg:flex-col">
+        <aside className="hidden w-64 shrink-0 border-r border-black/[.055] bg-[#fdfbff] px-5 py-7 lg:flex lg:flex-col">
           <Brand />
-          <Navigation view={view} setView={setView} />
+          <Navigation view={view} setView={setView} onChat={openChat} />
           <div className="mt-auto rounded-2xl border border-border bg-secondary/50 p-4">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
               <Sparkles className="size-4 text-primary" /> Better estimates
@@ -355,7 +368,7 @@ export default function CalorieChat() {
             <LogOut className="size-4 text-muted-foreground" />
           </button>
         </aside>
-        <section className="min-w-0 flex-1 pb-[calc(6.25rem+env(safe-area-inset-bottom))] lg:pb-10">
+        <section className="min-w-0 flex-1 pb-[calc(7.5rem+env(safe-area-inset-bottom))] lg:pb-10">
           <AppHeader
             view={view}
             selectedDate={selectedDate}
@@ -425,7 +438,7 @@ export default function CalorieChat() {
           )}
         </section>
       </div>
-      <Navigation view={view} setView={setView} mobile />
+      <Navigation view={view} setView={setView} onChat={openChat} mobile />
       {mealModal && (
         <MealModal
           value={mealModal === 'new' ? null : mealModal}
@@ -456,7 +469,7 @@ export default function CalorieChat() {
 function Brand() {
   return (
     <div className="mb-10 flex items-center gap-3 px-2">
-      <span className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(26,127,90,.24)]">
+      <span className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(102,74,166,.24)]">
         <Apple className="size-5" />
       </span>
       <span className="text-xl font-bold tracking-[-0.04em]">Calorie Chat</span>
@@ -467,20 +480,43 @@ function Brand() {
 function Navigation({
   view,
   setView,
+  onChat,
   mobile = false,
 }: {
   view: View;
   setView: (view: View) => void;
+  onChat: () => void;
   mobile?: boolean;
 }) {
   if (mobile)
     return (
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-black/[.06] bg-white/95 px-2 pb-[max(9px,env(safe-area-inset-bottom))] pt-2 shadow-[0_-10px_35px_rgba(26,54,43,.06)] backdrop-blur-xl lg:hidden">
-        {nav.map(({ id, label, icon: Icon }) => (
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 items-end rounded-t-[1.75rem] border border-b-0 border-[#ded5f0] bg-white/95 px-2 pb-[max(9px,env(safe-area-inset-bottom))] pt-2 shadow-[0_-16px_45px_rgba(67,52,112,.13)] backdrop-blur-xl lg:hidden">
+        {nav.slice(0, 2).map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setView(id)}
-            className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-2xl text-[11px] font-semibold transition active:scale-95 ${view === id ? 'bg-primary/[.08] text-primary' : 'text-muted-foreground'}`}
+            className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-2xl text-[10px] font-bold transition active:scale-95 ${view === id ? 'bg-primary/[.09] text-primary' : 'text-muted-foreground'}`}
+          >
+            <Icon className="size-[21px]" strokeWidth={view === id ? 2.5 : 2} />
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={onChat}
+          className="group -mt-6 flex min-h-[70px] flex-col items-center justify-start gap-1 text-[10px] font-extrabold text-primary transition active:scale-95"
+          aria-label="Jump to Ask Cal"
+        >
+          <span className="grid size-[58px] place-items-center rounded-[1.35rem] border-4 border-[#faf8ff] bg-[linear-gradient(145deg,#7657c8,#9b6de3)] text-white shadow-[0_10px_24px_rgba(105,76,175,.35)] transition group-active:shadow-sm">
+            <Sparkles className="size-6" strokeWidth={2.4} />
+          </span>
+          Ask Cal
+        </button>
+        {nav.slice(2).map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-2xl text-[10px] font-bold transition active:scale-95 ${view === id ? 'bg-primary/[.09] text-primary' : 'text-muted-foreground'}`}
           >
             <Icon className="size-[21px]" strokeWidth={view === id ? 2.5 : 2} />
             {label}
@@ -490,6 +526,17 @@ function Navigation({
     );
   return (
     <nav className="space-y-1.5">
+      <button
+        type="button"
+        onClick={onChat}
+        className="mb-5 flex w-full items-center gap-3 rounded-2xl bg-[linear-gradient(135deg,#6f50bd,#9568d9)] px-3.5 py-3.5 text-sm font-bold text-white shadow-[0_10px_24px_rgba(105,76,175,.24)] transition hover:-translate-y-0.5 active:translate-y-0"
+      >
+        <span className="grid size-8 place-items-center rounded-xl bg-white/15">
+          <Sparkles className="size-[18px]" />
+        </span>
+        Ask Cal
+        <ChevronRight className="ml-auto size-4 text-white/70" />
+      </button>
       {nav.map(({ id, label, icon: Icon }) => (
         <button
           key={id}
@@ -521,7 +568,7 @@ function AppHeader({
   };
   const today = singaporeDate();
   return (
-    <header className="sticky top-0 z-30 flex min-h-[72px] items-center justify-between border-b border-black/[.045] bg-[#f7faf7]/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:px-8 lg:static lg:px-12 lg:pt-0">
+    <header className="sticky top-0 z-30 flex min-h-[72px] items-center justify-between border-b border-black/[.045] bg-[#faf8ff]/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:px-8 lg:static lg:px-12 lg:pt-0">
       <div>
         <p className="text-[10px] font-bold uppercase tracking-[.17em] text-primary">
           {view === 'today' ? readableDate(today) : 'Calorie Chat'}
@@ -597,7 +644,7 @@ function TodayView({
         <button
           type="button"
           onClick={onOpenPlan}
-          className="flex w-full items-center gap-3 rounded-2xl border border-primary/15 bg-white p-4 text-left shadow-[0_10px_28px_rgba(28,70,54,.06)] transition hover:border-primary/30 active:scale-[.99]"
+          className="flex w-full items-center gap-3 rounded-2xl border border-primary/15 bg-white p-4 text-left shadow-[0_10px_28px_rgba(67,52,112,.08)] transition hover:border-primary/30 active:scale-[.99]"
         >
           <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-secondary text-primary">
             <Target className="size-5" />
@@ -620,11 +667,11 @@ function TodayView({
           </span>
           <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
         </button>
-        <section className="relative overflow-hidden rounded-[2rem] bg-[#153b30] px-5 pb-5 pt-5 text-white shadow-[0_22px_55px_rgba(14,54,41,.2)] sm:px-7 sm:pb-7">
-          <div className="pointer-events-none absolute -right-14 -top-16 size-52 rounded-full bg-[#55bf85]/20 blur-2xl" />
+        <section className="relative overflow-hidden rounded-[2rem] bg-[#342d5f] px-5 pb-5 pt-5 text-white shadow-[0_22px_55px_rgba(52,45,95,.22)] sm:px-7 sm:pb-7">
+          <div className="pointer-events-none absolute -right-14 -top-16 size-52 rounded-full bg-[#ff8f70]/25 blur-2xl" />
           <div className="relative flex items-center justify-between">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[.18em] text-[#9fdbbb]">
+              <p className="text-[11px] font-bold uppercase tracking-[.18em] text-[#d9cdff]">
                 Daily energy
               </p>
               <p className="mt-1 text-sm text-white/65">
@@ -655,7 +702,7 @@ function TodayView({
           <div className="relative mt-3 grid grid-cols-2 gap-2.5 border-t border-white/10 pt-4 sm:mt-4">
             <button
               onClick={onAdd}
-              className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-white font-bold text-[#153b30] transition active:scale-[.98]"
+              className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-white font-bold text-[#342d5f] transition active:scale-[.98]"
             >
               <Plus className="size-[18px]" /> Manual log
             </button>
@@ -782,7 +829,7 @@ function QuickFoods({
         {foods.map((food) => (
           <div
             key={food.id}
-            className="relative w-[142px] shrink-0 snap-start rounded-[1.4rem] border border-black/[.055] bg-card p-3.5 shadow-[0_8px_28px_rgba(32,60,49,.06)]"
+            className="relative w-[142px] shrink-0 snap-start rounded-[1.4rem] border border-black/[.055] bg-card p-3.5 shadow-[0_8px_28px_rgba(67,52,112,.08)]"
           >
             <button
               onClick={() => onManage(food)}
@@ -791,7 +838,7 @@ function QuickFoods({
             >
               <MoreHorizontal className="size-4" />
             </button>
-            <span className="grid size-11 place-items-center rounded-2xl bg-[#eef7f1] text-xl">
+            <span className="grid size-11 place-items-center rounded-2xl bg-[#f3effb] text-xl">
               {mealIcons[food.meal_type]}
             </span>
             <p className="mt-3 line-clamp-2 min-h-10 text-sm font-bold leading-5">
@@ -803,7 +850,7 @@ function QuickFoods({
             <button
               onClick={() => void logFood(food)}
               disabled={adding === food.id}
-              className="mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-[#e2f3e8] text-xs font-bold text-[#17613f] transition active:scale-[.97] disabled:opacity-60"
+              className="mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-[#eee7fb] text-xs font-bold text-[#6248a0] transition active:scale-[.97] disabled:opacity-60"
             >
               {adding === food.id ? (
                 <LoaderCircle className="size-4 animate-spin" />
@@ -866,7 +913,7 @@ function CalorieRing({
           cy="60"
           r="51"
           fill="none"
-          stroke={dark ? '#72d39c' : 'var(--primary)'}
+          stroke={dark ? '#ff9a7c' : 'var(--primary)'}
           strokeWidth="8"
           strokeLinecap="round"
           pathLength="100"
@@ -919,14 +966,14 @@ function MealList({
           </div>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-[1.6rem] border border-black/[.055] bg-card shadow-[0_8px_30px_rgba(32,60,49,.045)]">
+        <div className="overflow-hidden rounded-[1.6rem] border border-black/[.055] bg-card shadow-[0_8px_30px_rgba(67,52,112,.06)]">
           {meals.map((meal, index) => (
             <button
               key={meal.id}
               onClick={() => onEdit(meal)}
               className={`group flex min-h-[82px] w-full items-center gap-3.5 px-4 py-3.5 text-left transition active:bg-secondary/70 sm:px-5 ${index ? 'border-t border-black/[.055]' : ''}`}
             >
-              <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-[#f0f7f2] text-xl">
+              <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-[#f3effb] text-xl">
                 {mealIcons[meal.meal_type]}
               </span>
               <span className="min-w-0 flex-1">
@@ -1040,15 +1087,18 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
     setBusy(false);
   }
   return (
-    <section className="rounded-[2rem] border border-black/[.055] bg-white p-5 shadow-[0_14px_45px_rgba(32,60,49,.06)] sm:p-6">
+    <section
+      id="ask-cal"
+      className="scroll-mt-24 rounded-[2rem] border border-[#ded5f0] bg-white p-5 shadow-[0_14px_45px_rgba(67,52,112,.1)] sm:p-6"
+    >
       <div className="flex items-center gap-3">
-        <span className="grid size-11 place-items-center rounded-2xl bg-[#153b30] text-white shadow-[0_8px_24px_rgba(21,59,48,.18)]">
+        <span className="grid size-11 place-items-center rounded-2xl bg-[#342d5f] text-white shadow-[0_8px_24px_rgba(67,52,112,.22)]">
           <Sparkles className="size-5" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h2 className="font-bold">Ask Cal</h2>
-            <span className="rounded-full bg-[#e5f4ea] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#17613f]">
+            <span className="rounded-full bg-[#efe9fb] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#6248a0]">
               AI estimate
             </span>
           </div>
@@ -1058,8 +1108,8 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
         </div>
       </div>
       {!estimate && (
-        <div className="mt-5 rounded-2xl rounded-bl-md bg-[#f1f7f3] px-4 py-3.5 text-sm leading-6">
-          <p className="font-semibold text-[#24493a]">What did you eat?</p>
+        <div className="mt-5 rounded-2xl rounded-bl-md bg-[#f6f2fc] px-4 py-3.5 text-sm leading-6">
+          <p className="font-semibold text-[#493d70]">What did you eat?</p>
           <p className="text-muted-foreground">
             Try “chicken rice and milk tea, normal sugar”
           </p>
@@ -1123,7 +1173,7 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
         aria-label="Choose a food photo"
       />
       {photo ? (
-        <div className="mt-4 flex items-center gap-3 rounded-2xl border border-[#cfe1d8] bg-[#f7fbf8] p-2.5">
+        <div className="mt-4 flex items-center gap-3 rounded-2xl border border-[#ded5f0] bg-[#fbf9ff] p-2.5">
           <div className="relative size-16 shrink-0 overflow-hidden rounded-xl shadow-sm">
             <Image
               src={photo.dataUrl}
@@ -1161,7 +1211,7 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
             type="button"
             size="sm"
             variant="outline"
-            className="h-10 flex-1 rounded-xl bg-[#fbfdfb]"
+            className="h-10 flex-1 rounded-xl bg-[#fbf9ff]"
             onClick={() => cameraInput.current?.click()}
             disabled={busy || preparingPhoto}
           >
@@ -1176,7 +1226,7 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
             type="button"
             size="sm"
             variant="outline"
-            className="h-10 flex-1 rounded-xl bg-[#fbfdfb]"
+            className="h-10 flex-1 rounded-xl bg-[#fbf9ff]"
             onClick={() => libraryInput.current?.click()}
             disabled={busy || preparingPhoto}
           >
@@ -1194,7 +1244,7 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
           onChange={(event) => setMessage(event.target.value)}
           placeholder={photo ? 'Add a note (optional)…' : 'I just ate…'}
           rows={1}
-          className="min-h-12 min-w-0 flex-1 resize-none rounded-2xl border border-input bg-[#fbfdfb] px-4 py-3 text-base leading-6 outline-none ring-primary/15 transition focus:ring-4 sm:text-sm"
+          className="min-h-12 min-w-0 flex-1 resize-none rounded-2xl border border-input bg-[#fbf9ff] px-4 py-3 text-base leading-6 outline-none ring-primary/15 transition focus:ring-4 sm:text-sm"
         />
         <Button
           type="submit"
@@ -1659,9 +1709,9 @@ function SettingsView({
         onSubmit={submit}
         className="overflow-hidden rounded-3xl border bg-card"
       >
-        <div className="bg-[linear-gradient(135deg,#e8f6ed_0%,#f8fbf8_70%)] p-6 sm:p-8">
+        <div className="bg-[linear-gradient(135deg,#eee8fb_0%,#fbf9ff_70%)] p-6 sm:p-8">
           <div className="flex items-start gap-4">
-            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(26,127,90,.18)]">
+            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(105,76,175,.22)]">
               <Calculator className="size-5" />
             </span>
             <div>
@@ -1775,24 +1825,24 @@ function SettingsView({
           </div>
 
           {estimate ? (
-            <div className="mt-7 rounded-3xl bg-[#183f32] p-5 text-white sm:p-6">
+            <div className="mt-7 rounded-3xl bg-[#3b3269] p-5 text-white sm:p-6">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[.14em] text-emerald-200">
+                <p className="text-xs font-bold uppercase tracking-[.14em] text-violet-200">
                   Your calorie goal is
                 </p>
                 <p className="mt-1 text-4xl font-bold tracking-[-.05em]">
                   {estimate.suggestedCalories.toLocaleString()}
-                  <span className="ml-2 text-base font-medium tracking-normal text-emerald-100">
+                  <span className="ml-2 text-base font-medium tracking-normal text-violet-100">
                     kcal/day
                   </span>
                 </p>
-                <p className="mt-2 text-sm text-emerald-50/80">
+                <p className="mt-2 text-sm text-violet-50/80">
                   Maintenance is about{' '}
                   {estimate.maintenanceCalories.toLocaleString()} kcal/day ·{' '}
                   {estimate.dailyDeficit.toLocaleString()} kcal daily deficit
                 </p>
               </div>
-              <div className="mt-5 grid gap-2 border-t border-white/10 pt-4 text-sm text-emerald-50/80 sm:grid-cols-2">
+              <div className="mt-5 grid gap-2 border-t border-white/10 pt-4 text-sm text-violet-50/80 sm:grid-cols-2">
                 <p>Estimated pace: ~{estimate.expectedWeeklyLoss} kg/week</p>
                 <p>
                   {estimate.estimatedWeeks
@@ -1942,14 +1992,14 @@ function SavedFoodModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-[#102e25]/50 backdrop-blur-sm sm:place-items-center sm:p-6">
+    <div className="fixed inset-0 z-50 grid place-items-end bg-[#241d43]/50 backdrop-blur-sm sm:place-items-center sm:p-6">
       <form
         onSubmit={submit}
         className="max-h-[94dvh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-card px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-5 shadow-2xl sm:rounded-[2rem] sm:p-7"
       >
         <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-border sm:hidden" />
         <div className="flex items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-2xl bg-[#e6f4eb] text-primary">
+          <span className="grid size-11 place-items-center rounded-2xl bg-[#efe9fb] text-primary">
             <Coffee className="size-5" />
           </span>
           <div className="min-w-0 flex-1">
@@ -2135,7 +2185,7 @@ function MealModal({
     setBusy(false);
   }
   return (
-    <div className="fixed inset-0 z-50 grid place-items-end bg-[#153a2d]/45 p-0 backdrop-blur-sm sm:place-items-center sm:p-6">
+    <div className="fixed inset-0 z-50 grid place-items-end bg-[#2b244d]/45 p-0 backdrop-blur-sm sm:place-items-center sm:p-6">
       <form
         onSubmit={submit}
         className="max-h-[94dvh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-card px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-5 shadow-2xl sm:rounded-[2rem] sm:p-7"
@@ -2229,7 +2279,7 @@ function MealModal({
           </Field>
         </div>
         {!value && (
-          <div className="mt-5 flex min-h-14 items-center gap-3 rounded-2xl border border-primary/15 bg-[#f0f8f3] px-4 py-3">
+          <div className="mt-5 flex min-h-14 items-center gap-3 rounded-2xl border border-primary/15 bg-[#f5f1fc] px-4 py-3">
             <input
               id="save-as-usual"
               type="checkbox"
@@ -2347,7 +2397,7 @@ function AuthScreen({
     setBusy(false);
   }
   return (
-    <main className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#dff4e7,transparent_42%),var(--background)] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:p-5">
+    <main className="min-h-dvh bg-[radial-gradient(circle_at_top_left,#e8dffc,transparent_42%),var(--background)] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:p-5">
       <div className="mx-auto grid min-h-[calc(100dvh-2rem)] max-w-5xl items-center gap-10 sm:min-h-[calc(100dvh-40px)] lg:grid-cols-2">
         <section className="hidden lg:block">
           <Brand />
@@ -2364,7 +2414,7 @@ function AuthScreen({
         </section>
         <form
           onSubmit={submit}
-          className="mx-auto w-full max-w-md rounded-[2rem] border border-black/[.055] bg-card p-6 shadow-[0_24px_70px_rgba(24,59,47,.12)] sm:p-9"
+          className="mx-auto w-full max-w-md rounded-[2rem] border border-black/[.055] bg-card p-6 shadow-[0_24px_70px_rgba(67,52,112,.14)] sm:p-9"
         >
           <div className="lg:hidden">
             <Brand />
