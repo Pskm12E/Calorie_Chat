@@ -5,6 +5,7 @@ import type { User } from '@supabase/supabase-js';
 import {
   Apple,
   BookmarkPlus,
+  Calculator,
   CalendarDays,
   ChartNoAxesCombined,
   ChevronLeft,
@@ -13,6 +14,7 @@ import {
   Coffee,
   History,
   Home,
+  HeartPulse,
   LoaderCircle,
   LogOut,
   MoreHorizontal,
@@ -47,6 +49,17 @@ type Meal = {
 };
 type WeightEntry = { id: string; weight_kg: number; recorded_at: string };
 type StepEntry = { id: string; date: string; steps: number };
+type SexForEquation = 'female' | 'male';
+type ActivityLevel = 'sedentary' | 'light' | 'active' | 'very_active';
+type UserSettings = {
+  daily_calorie_goal: number;
+  target_weight: number | null;
+  height_cm: number | null;
+  age_years: number | null;
+  sex_for_equation: SexForEquation | null;
+  activity_level: ActivityLevel | null;
+  weekly_weight_loss_kg: number | null;
+};
 type SavedFood = {
   id: string;
   food_name: string;
@@ -69,6 +82,31 @@ type FormSubmitEvent = Parameters<
 
 const supabase = createClient();
 const USER_ID_DOMAIN = 'caloriechat.local';
+const activityLevels: Record<
+  ActivityLevel,
+  { label: string; detail: string; factor: number }
+> = {
+  sedentary: {
+    label: 'Mostly sedentary',
+    detail: 'Mostly sitting, little planned exercise',
+    factor: 1.4,
+  },
+  light: {
+    label: 'Lightly active',
+    detail: 'Mostly sitting, plus some activity each week',
+    factor: 1.6,
+  },
+  active: {
+    label: 'Active',
+    detail: 'Regular moderate activity or an active job',
+    factor: 1.8,
+  },
+  very_active: {
+    label: 'Very active',
+    detail: 'Hard training or a very physical job',
+    factor: 2,
+  },
+};
 const mealLabels: Record<MealType, string> = {
   breakfast: 'Breakfast',
   lunch: 'Lunch',
@@ -139,6 +177,7 @@ export default function CalorieChat() {
   const [steps, setSteps] = useState<StepEntry[]>([]);
   const [savedFoods, setSavedFoods] = useState<SavedFood[]>([]);
   const [goal, setGoal] = useState(1900);
+  const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [mealModal, setMealModal] = useState<Meal | 'new' | null>(null);
@@ -200,6 +239,7 @@ export default function CalorieChat() {
     setSteps((stepResult.data ?? []) as StepEntry[]);
     setSavedFoods((savedFoodResult.data ?? []) as SavedFood[]);
     setGoal(settingResult.data?.daily_calorie_goal ?? 1900);
+    setSettings((settingResult.data ?? null) as UserSettings | null);
     setLoading(false);
   }, []);
 
@@ -329,6 +369,8 @@ export default function CalorieChat() {
               {view === 'settings' && (
                 <SettingsView
                   goal={goal}
+                  settings={settings}
+                  latestWeight={latestWeight}
                   userId={user.id}
                   email={accountLabel(user)}
                   onSaved={() => loadData(user)}
@@ -1235,89 +1277,428 @@ function QuickEntry({
   );
 }
 
+type WeightLossEstimate = {
+  restingCalories: number;
+  maintenanceCalories: number;
+  suggestedCalories: number;
+  dailyDeficit: number;
+  expectedWeeklyLoss: number;
+  estimatedWeeks: number | null;
+  minimumApplied: boolean;
+};
+
+function calculateWeightLossEstimate({
+  weightKg,
+  heightCm,
+  ageYears,
+  sex,
+  activityLevel,
+  weeklyLossKg,
+  targetWeightKg,
+}: {
+  weightKg: number;
+  heightCm: number;
+  ageYears: number;
+  sex: SexForEquation | '';
+  activityLevel: ActivityLevel | '';
+  weeklyLossKg: number;
+  targetWeightKg: number | null;
+}): WeightLossEstimate | null {
+  if (
+    weightKg < 20 ||
+    weightKg > 500 ||
+    heightCm < 100 ||
+    heightCm > 250 ||
+    ageYears < 18 ||
+    ageYears > 100 ||
+    !sex ||
+    !activityLevel ||
+    ![0.25, 0.5, 0.75].includes(weeklyLossKg)
+  ) {
+    return null;
+  }
+
+  const sexAdjustment = sex === 'male' ? 5 : -161;
+  const restingCalories = Math.round(
+    10 * weightKg + 6.25 * heightCm - 5 * ageYears + sexAdjustment,
+  );
+  const maintenanceCalories =
+    Math.round((restingCalories * activityLevels[activityLevel].factor) / 10) *
+    10;
+  const requestedDeficit = (weeklyLossKg * 7700) / 7;
+  const uncappedTarget = maintenanceCalories - requestedDeficit;
+  const suggestedCalories = Math.max(
+    1200,
+    Math.round(uncappedTarget / 10) * 10,
+  );
+  const dailyDeficit = Math.max(0, maintenanceCalories - suggestedCalories);
+  const expectedWeeklyLoss =
+    Math.round(((dailyDeficit * 7) / 7700) * 100) / 100;
+  const estimatedWeeks =
+    targetWeightKg && targetWeightKg < weightKg && expectedWeeklyLoss > 0
+      ? Math.ceil((weightKg - targetWeightKg) / expectedWeeklyLoss)
+      : null;
+
+  return {
+    restingCalories,
+    maintenanceCalories,
+    suggestedCalories,
+    dailyDeficit,
+    expectedWeeklyLoss,
+    estimatedWeeks,
+    minimumApplied: uncappedTarget < 1200,
+  };
+}
+
 function SettingsView({
   goal,
+  settings,
+  latestWeight,
   userId,
   email,
   onSaved,
   onSignOut,
 }: {
   goal: number;
+  settings: UserSettings | null;
+  latestWeight: WeightEntry | undefined;
   userId: string;
   email: string;
   onSaved: () => void;
   onSignOut: () => void;
 }) {
   const [newGoal, setNewGoal] = useState(goal.toString());
-  const [target, setTarget] = useState('');
+  const [currentWeight, setCurrentWeight] = useState(
+    latestWeight?.weight_kg.toString() ?? '',
+  );
+  const [target, setTarget] = useState(
+    settings?.target_weight?.toString() ?? '',
+  );
+  const [height, setHeight] = useState(settings?.height_cm?.toString() ?? '');
+  const [age, setAge] = useState(settings?.age_years?.toString() ?? '');
+  const [sex, setSex] = useState<SexForEquation | ''>(
+    settings?.sex_for_equation ?? '',
+  );
+  const [activity, setActivity] = useState<ActivityLevel | ''>(
+    settings?.activity_level ?? '',
+  );
+  const [weeklyLoss, setWeeklyLoss] = useState(
+    settings?.weekly_weight_loss_kg?.toString() ?? '0.5',
+  );
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const estimate = calculateWeightLossEstimate({
+    weightKg: Number(currentWeight),
+    heightCm: Number(height),
+    ageYears: Number(age),
+    sex,
+    activityLevel: activity,
+    weeklyLossKg: Number(weeklyLoss),
+    targetWeightKg: target ? Number(target) : null,
+  });
+
   async function submit(event: FormSubmitEvent) {
     event.preventDefault();
-    const date = singaporeDate();
-    await Promise.all([
+    setFormError('');
+    if (!estimate) {
+      setFormError('Complete the required fields to calculate your plan.');
+      return;
+    }
+
+    setSaving(true);
+    const now = new Date().toISOString();
+    const shouldLogWeight =
+      !latestWeight ||
+      Math.abs(latestWeight.weight_kg - Number(currentWeight)) >= 0.05;
+    const weightPromise = shouldLogWeight
+      ? supabase.from('weight_entries').insert({
+          user_id: userId,
+          weight_kg: Number(currentWeight),
+          recorded_at: now,
+        })
+      : Promise.resolve({ error: null });
+    const [settingsResult, goalResult, weightResult] = await Promise.all([
       supabase.from('user_settings').upsert({
         user_id: userId,
         daily_calorie_goal: Number(newGoal),
         timezone: 'Asia/Singapore',
         target_weight: target ? Number(target) : null,
-        updated_at: new Date().toISOString(),
+        height_cm: Number(height),
+        age_years: Number(age),
+        sex_for_equation: sex,
+        activity_level: activity,
+        weekly_weight_loss_kg: Number(weeklyLoss),
+        updated_at: now,
       }),
       supabase.from('daily_goals').upsert(
         {
           user_id: userId,
-          effective_date: date,
+          effective_date: singaporeDate(),
           calorie_goal: Number(newGoal),
         },
         { onConflict: 'user_id,effective_date' },
       ),
+      weightPromise,
     ]);
+    const saveError =
+      settingsResult.error || goalResult.error || weightResult.error;
+    setSaving(false);
+    if (saveError) {
+      setFormError(saveError.message);
+      return;
+    }
     setSaved(true);
     onSaved();
-    setTimeout(() => setSaved(false), 2000);
+    window.setTimeout(() => setSaved(false), 2000);
   }
+
   return (
-    <div className="mx-auto max-w-2xl px-4 py-6 sm:px-8 lg:px-12 lg:py-9">
-      <form onSubmit={submit} className="rounded-3xl border bg-card p-6 sm:p-8">
-        <h2 className="text-lg font-bold">Your goals</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Changes apply from today. Previous goals remain in your history.
-        </p>
-        <label className="mt-6 block text-sm font-semibold">
-          Daily calorie goal
-          <input
-            type="number"
-            min="500"
-            max="10000"
-            value={newGoal}
-            onChange={(event) => setNewGoal(event.target.value)}
-            className="mt-2 block h-11 w-full rounded-xl border bg-background px-3 font-normal"
-          />
-        </label>
-        <label className="mt-5 block text-sm font-semibold">
-          Target weight (optional)
-          <input
-            type="number"
-            min="20"
-            max="500"
-            step="0.1"
-            value={target}
-            onChange={(event) => setTarget(event.target.value)}
-            className="mt-2 block h-11 w-full rounded-xl border bg-background px-3 font-normal"
-          />
-        </label>
-        <label className="mt-5 block text-sm font-semibold">
-          Timezone
-          <input
-            disabled
-            value="Asia/Singapore"
-            className="mt-2 block h-11 w-full rounded-xl border bg-muted px-3 font-normal text-muted-foreground"
-          />
-        </label>
-        <Button type="submit" className="mt-7 h-11 px-5">
-          {saved ? 'Saved!' : 'Save settings'}
-        </Button>
+    <div className="mx-auto max-w-3xl space-y-4 px-4 py-6 sm:px-8 lg:px-12 lg:py-9">
+      <form
+        onSubmit={submit}
+        className="overflow-hidden rounded-3xl border bg-card"
+      >
+        <div className="bg-[linear-gradient(135deg,#e8f6ed_0%,#f8fbf8_70%)] p-6 sm:p-8">
+          <div className="flex items-start gap-4">
+            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(26,127,90,.18)]">
+              <Calculator className="size-5" />
+            </span>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[.14em] text-primary">
+                Personal estimate
+              </p>
+              <h2 className="mt-1 text-xl font-bold tracking-[-.025em]">
+                Your weight-loss plan
+              </h2>
+              <p className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
+                Tell us about your body and usual activity. We’ll estimate the
+                food energy that may support gradual weight loss.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6 sm:p-8">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Current weight (kg)">
+              <input
+                required
+                type="number"
+                inputMode="decimal"
+                min="20"
+                max="500"
+                step="0.1"
+                value={currentWeight}
+                onChange={(event) => setCurrentWeight(event.target.value)}
+                placeholder="e.g. 82"
+              />
+            </Field>
+            <Field label="Target weight (kg, optional)">
+              <input
+                type="number"
+                inputMode="decimal"
+                min="20"
+                max="500"
+                step="0.1"
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+                placeholder="e.g. 74"
+              />
+            </Field>
+            <Field label="Height (cm)">
+              <input
+                required
+                type="number"
+                inputMode="decimal"
+                min="100"
+                max="250"
+                step="0.1"
+                value={height}
+                onChange={(event) => setHeight(event.target.value)}
+                placeholder="e.g. 175"
+              />
+            </Field>
+            <Field label="Age">
+              <input
+                required
+                type="number"
+                inputMode="numeric"
+                min="18"
+                max="100"
+                step="1"
+                value={age}
+                onChange={(event) => setAge(event.target.value)}
+                placeholder="e.g. 30"
+              />
+            </Field>
+            <Field label="Sex used by the equation">
+              <select
+                required
+                value={sex}
+                onChange={(event) =>
+                  setSex(event.target.value as SexForEquation | '')
+                }
+              >
+                <option value="">Choose one</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+              </select>
+            </Field>
+            <Field label="Usual activity">
+              <select
+                required
+                value={activity}
+                onChange={(event) =>
+                  setActivity(event.target.value as ActivityLevel | '')
+                }
+              >
+                <option value="">Choose one</option>
+                {Object.entries(activityLevels).map(([value, item]) => (
+                  <option key={value} value={value}>
+                    {item.label} — {item.detail}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Goal pace" wide>
+              <select
+                required
+                value={weeklyLoss}
+                onChange={(event) => setWeeklyLoss(event.target.value)}
+              >
+                <option value="0.25">Gentle · about 0.25 kg/week</option>
+                <option value="0.5">Steady · about 0.5 kg/week</option>
+                <option value="0.75">Faster · about 0.75 kg/week</option>
+              </select>
+            </Field>
+          </div>
+
+          {estimate ? (
+            <div className="mt-7 rounded-3xl bg-[#183f32] p-5 text-white sm:p-6">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[.14em] text-emerald-200">
+                    Suggested daily target
+                  </p>
+                  <p className="mt-1 text-4xl font-bold tracking-[-.05em]">
+                    {estimate.suggestedCalories.toLocaleString()}
+                    <span className="ml-2 text-base font-medium tracking-normal text-emerald-100">
+                      kcal/day
+                    </span>
+                  </p>
+                  <p className="mt-2 text-sm text-emerald-50/80">
+                    Maintenance is about{' '}
+                    {estimate.maintenanceCalories.toLocaleString()} kcal/day ·{' '}
+                    {estimate.dailyDeficit.toLocaleString()} kcal daily deficit
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="h-11 shrink-0 rounded-xl px-4"
+                  onClick={() =>
+                    setNewGoal(estimate.suggestedCalories.toString())
+                  }
+                >
+                  Use this target
+                </Button>
+              </div>
+              <div className="mt-5 grid gap-2 border-t border-white/10 pt-4 text-sm text-emerald-50/80 sm:grid-cols-2">
+                <p>Estimated pace: ~{estimate.expectedWeeklyLoss} kg/week</p>
+                <p>
+                  {estimate.estimatedWeeks
+                    ? `Roughly ${estimate.estimatedWeeks} weeks to your target`
+                    : `Resting need estimate: ${estimate.restingCalories.toLocaleString()} kcal/day`}
+                </p>
+              </div>
+              {estimate.minimumApplied && (
+                <p className="mt-4 rounded-xl bg-amber-300/15 px-3 py-2 text-xs leading-5 text-amber-100">
+                  The selected pace would push the estimate below 1,200
+                  kcal/day, so it has been capped. Choose a gentler pace or
+                  speak with a qualified clinician or dietitian.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="mt-7 rounded-2xl border border-dashed bg-muted/35 p-5 text-sm text-muted-foreground">
+              Complete your current weight, height, age, sex, and activity to
+              see an estimate.
+            </div>
+          )}
+
+          <div className="mt-7 border-t pt-7">
+            <h3 className="font-bold">Daily tracking target</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Use the suggestion above or choose your own target. Changes apply
+              from today; previous goals stay in your history.
+            </p>
+            <label className="mt-4 block text-sm font-semibold">
+              Daily calorie goal
+              <div className="mt-2 flex h-12 items-center rounded-xl border bg-background pr-4">
+                <input
+                  required
+                  type="number"
+                  inputMode="numeric"
+                  min="1200"
+                  max="10000"
+                  value={newGoal}
+                  onChange={(event) => setNewGoal(event.target.value)}
+                  className="min-w-0 flex-1 bg-transparent px-3 font-normal outline-none"
+                />
+                <span className="text-xs text-muted-foreground">kcal/day</span>
+              </div>
+            </label>
+          </div>
+
+          {formError && (
+            <p className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-red-700">
+              {formError}
+            </p>
+          )}
+          <Button
+            type="submit"
+            disabled={saving}
+            className="mt-6 h-12 w-full rounded-xl sm:w-auto sm:px-6"
+          >
+            {saving && <LoaderCircle className="animate-spin" />}
+            {saved ? 'Plan saved!' : 'Save my plan'}
+          </Button>
+        </div>
       </form>
-      <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-card p-5">
+
+      <div className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
+        <HeartPulse className="mt-0.5 size-5 shrink-0" />
+        <p className="text-xs leading-5">
+          This is an adult planning estimate, not medical advice. It may not be
+          suitable during pregnancy or breastfeeding, for anyone under 18, or
+          for people with medical conditions or a history of disordered eating.
+          Your actual needs can differ, so review major diet changes with a
+          healthcare professional. Method: Mifflin–St Jeor resting-energy
+          equation with an activity estimate. Learn more from the{' '}
+          <a
+            href="https://www.niddk.nih.gov/bwp"
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold underline underline-offset-2"
+          >
+            NIH Body Weight Planner
+          </a>{' '}
+          and{' '}
+          <a
+            href="https://www.cdc.gov/healthy-weight-growth/losing-weight/index.html"
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold underline underline-offset-2"
+          >
+            CDC guidance
+          </a>
+          .
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3 rounded-2xl border bg-card p-5">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">Signed in as</p>
           <p className="mt-1 truncate text-sm text-muted-foreground">{email}</p>
