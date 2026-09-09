@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || 'gpt-5.4-mini',
+      model: process.env.OPENAI_MODEL || 'gpt-5.6-luna',
       store: false,
       tools: [{ type: 'web_search' }],
       instructions: `You are a careful calorie logging assistant for a user in Singapore.
