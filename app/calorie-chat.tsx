@@ -23,6 +23,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  RefreshCw,
   Scale,
   Send,
   Settings,
@@ -80,6 +81,8 @@ type Estimate = {
   follow_up: string | null;
   meals: EstimateMeal[];
 };
+type EstimateSource = 'chatgpt_photo' | 'chatgpt_text';
+type StoredEstimate = { estimate: Estimate; source: EstimateSource };
 
 function isEstimate(value: unknown): value is Estimate {
   if (!value || typeof value !== 'object') return false;
@@ -88,6 +91,16 @@ function isEstimate(value: unknown): value is Estimate {
     typeof candidate.reply === 'string' &&
     (typeof candidate.follow_up === 'string' || candidate.follow_up === null) &&
     Array.isArray(candidate.meals)
+  );
+}
+
+function isStoredEstimate(value: unknown): value is StoredEstimate {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<StoredEstimate>;
+  return (
+    isEstimate(candidate.estimate) &&
+    (candidate.source === 'chatgpt_photo' ||
+      candidate.source === 'chatgpt_text')
   );
 }
 
@@ -733,13 +746,13 @@ function TodayView({
           onSaved={onSaved}
         />
         <div className="lg:hidden">
-          <ChatCard onSaved={onSaved} />
+          <ChatCard userId={userId} onSaved={onSaved} />
         </div>
         <MealList meals={meals} onEdit={onEdit} />
       </div>
       <div className="min-w-0 space-y-5 lg:sticky lg:top-6 lg:self-start">
         <div className="hidden lg:block">
-          <ChatCard onSaved={onSaved} />
+          <ChatCard userId={userId} onSaved={onSaved} />
         </div>
         <section className="grid grid-cols-2 gap-3">
           <MetricCard
@@ -1013,15 +1026,53 @@ function MealList({
   );
 }
 
-function ChatCard({ onSaved }: { onSaved: () => void }) {
+function ChatCard({
+  userId,
+  onSaved,
+}: {
+  userId: string;
+  onSaved: () => void;
+}) {
   const [message, setMessage] = useState('');
   const [photo, setPhoto] = useState<PendingPhoto | null>(null);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [estimateSource, setEstimateSource] = useState<EstimateSource | null>(
+    null,
+  );
   const [busy, setBusy] = useState(false);
   const [preparingPhoto, setPreparingPhoto] = useState(false);
   const [error, setError] = useState('');
   const cameraInput = useRef<HTMLInputElement>(null);
   const libraryInput = useRef<HTMLInputElement>(null);
+  const storageKey = `calorie-chat:pending-estimate:v1:${userId}`;
+
+  useEffect(() => {
+    const restoreTimer = window.setTimeout(() => {
+      try {
+        const storedValue = window.localStorage.getItem(storageKey);
+        if (!storedValue) return;
+        const stored = JSON.parse(storedValue) as unknown;
+        if (!isStoredEstimate(stored)) {
+          window.localStorage.removeItem(storageKey);
+          return;
+        }
+        setEstimate(stored.estimate);
+        setEstimateSource(stored.source);
+      } catch {
+        window.localStorage.removeItem(storageKey);
+      }
+    }, 0);
+    return () => window.clearTimeout(restoreTimer);
+  }, [storageKey]);
+
+  function clearEstimateSession() {
+    setMessage('');
+    setPhoto(null);
+    setEstimate(null);
+    setEstimateSource(null);
+    setError('');
+    window.localStorage.removeItem(storageKey);
+  }
 
   async function selectPhoto(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -1046,6 +1097,10 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
   async function estimateMeal(event: FormSubmitEvent) {
     event.preventDefault();
     if (!message.trim() && !photo) return;
+    const submittedMessage = message.trim();
+    const submittedPhoto = photo;
+    let estimated = false;
+    setMessage('');
     setBusy(true);
     setError('');
     setEstimate(null);
@@ -1055,8 +1110,8 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
         method: 'POST',
         headers: authHeaders(data.session?.access_token ?? ''),
         body: JSON.stringify({
-          message: message.trim(),
-          image: photo?.dataUrl,
+          message: submittedMessage,
+          image: submittedPhoto?.dataUrl,
         }),
       });
       const result = (await response.json()) as unknown;
@@ -1071,13 +1126,24 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
             : responseError || 'Unable to estimate this meal.',
         );
       } else if (isEstimate(result)) {
+        const source: EstimateSource = submittedPhoto
+          ? 'chatgpt_photo'
+          : 'chatgpt_text';
         setEstimate(result);
+        setEstimateSource(source);
+        setPhoto(null);
+        estimated = true;
+        window.localStorage.setItem(
+          storageKey,
+          JSON.stringify({ estimate: result, source } satisfies StoredEstimate),
+        );
       } else {
         setError('The estimate response was incomplete. Please try again.');
       }
     } catch {
       setError('Unable to reach the estimator. Please try again.');
     } finally {
+      if (!estimated) setMessage((current) => current || submittedMessage);
       setBusy(false);
     }
   }
@@ -1092,15 +1158,13 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
       user_id: data.user!.id,
       date: singaporeDate(),
       consumed_at: now.toISOString(),
-      source: photo ? 'chatgpt_photo' : 'chatgpt_text',
+      source: estimateSource ?? 'chatgpt_text',
       idempotency_key: crypto.randomUUID(),
     }));
     const { error: saveError } = await supabase.from('meals').insert(rows);
     if (saveError) setError(saveError.message);
     else {
-      setEstimate(null);
-      setMessage('');
-      setPhoto(null);
+      clearEstimateSession();
       onSaved();
     }
     setBusy(false);
@@ -1125,6 +1189,18 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
             Say what you ate, just as you would text it
           </p>
         </div>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="shrink-0 rounded-xl text-[#6248a0]"
+          onClick={clearEstimateSession}
+          disabled={busy || preparingPhoto}
+          aria-label="Start a new meal estimate"
+          title="Start a new estimate"
+        >
+          <RefreshCw />
+        </Button>
       </div>
       {!estimate && (
         <div className="mt-5 rounded-2xl rounded-bl-md bg-[#f6f2fc] px-4 py-3.5 text-sm leading-6">
@@ -1163,8 +1239,8 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
             <Button onClick={saveEstimate} disabled={busy} className="flex-1">
               Save {estimate.meals.length > 1 ? 'meals' : 'meal'}
             </Button>
-            <Button variant="outline" onClick={() => setEstimate(null)}>
-              Edit
+            <Button variant="outline" onClick={clearEstimateSession}>
+              Start over
             </Button>
           </div>
         </div>
