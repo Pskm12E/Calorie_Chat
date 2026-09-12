@@ -80,6 +80,17 @@ type Estimate = {
   follow_up: string | null;
   meals: EstimateMeal[];
 };
+
+function isEstimate(value: unknown): value is Estimate {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<Estimate>;
+  return (
+    typeof candidate.reply === 'string' &&
+    (typeof candidate.follow_up === 'string' || candidate.follow_up === null) &&
+    Array.isArray(candidate.meals)
+  );
+}
+
 type PendingPhoto = {
   dataUrl: string;
   name: string;
@@ -1048,14 +1059,22 @@ function ChatCard({ onSaved }: { onSaved: () => void }) {
           image: photo?.dataUrl,
         }),
       });
-      const result = (await response.json()) as Estimate & { error?: string };
-      if (!response.ok)
+      const result = (await response.json()) as unknown;
+      if (!response.ok) {
+        const responseError =
+          result && typeof result === 'object' && 'error' in result
+            ? String(result.error)
+            : '';
         setError(
-          result.error === 'AI_SETUP_REQUIRED'
+          responseError === 'AI_SETUP_REQUIRED'
             ? 'Add your OpenAI API key to turn on AI estimates.'
-            : (result.error ?? 'Unable to estimate this meal.'),
+            : responseError || 'Unable to estimate this meal.',
         );
-      else setEstimate(result);
+      } else if (isEstimate(result)) {
+        setEstimate(result);
+      } else {
+        setError('The estimate response was incomplete. Please try again.');
+      }
     } catch {
       setError('Unable to reach the estimator. Please try again.');
     } finally {

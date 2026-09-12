@@ -15,6 +15,23 @@ const estimateRequestSchema = z
     message: 'Describe your meal or add a photo.',
   });
 
+const estimateResponseSchema = z.object({
+  reply: z.string(),
+  follow_up: z.string().nullable(),
+  meals: z.array(
+    z.object({
+      food_name: z.string(),
+      meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack', 'drink']),
+      quantity: z.number(),
+      calories: z.number().int(),
+      calorie_low: z.number().int(),
+      calorie_high: z.number().int(),
+      confidence: z.enum(['high', 'medium_high', 'medium', 'low']),
+      notes: z.string(),
+    }),
+  ),
+});
+
 const schema = {
   type: 'object',
   additionalProperties: false,
@@ -115,7 +132,10 @@ Never describe an estimate as exact. Do not save anything; the user must review 
     }),
   });
   const result = (await response.json()) as {
-    output_text?: string;
+    output?: Array<{
+      type?: string;
+      content?: Array<{ type?: string; text?: string }>;
+    }>;
     error?: { message?: string };
   };
   if (!response.ok)
@@ -123,8 +143,15 @@ Never describe an estimate as exact. Do not save anything; the user must review 
       { error: result.error?.message ?? 'Unable to estimate this meal.' },
       { status: 502 },
     );
+  const outputText = result.output
+    ?.flatMap((item) => item.content ?? [])
+    .find((part) => part.type === 'output_text')?.text;
   try {
-    return NextResponse.json(JSON.parse(result.output_text ?? '{}'));
+    const parsedEstimate = estimateResponseSchema.safeParse(
+      JSON.parse(outputText ?? ''),
+    );
+    if (!parsedEstimate.success) throw new Error('Invalid estimate response');
+    return NextResponse.json(parsedEstimate.data);
   } catch {
     return NextResponse.json(
       { error: 'The estimate could not be read. Please try again.' },
