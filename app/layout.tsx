@@ -15,13 +15,13 @@ const geistMono = Geist_Mono({
 const productionUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
   : undefined;
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+  productionUrl ||
+  'http://localhost:3000';
 
 export const metadata: Metadata = {
-  metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ??
-      productionUrl ??
-      'http://localhost:3000',
-  ),
+  metadataBase: new URL(siteUrl),
   title: 'Calorie Chat — Personal meal tracker',
   description:
     'Log meals naturally, review calorie estimates, and follow your daily progress.',
