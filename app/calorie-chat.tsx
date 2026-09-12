@@ -83,6 +83,12 @@ type Estimate = {
 };
 type EstimateSource = 'chatgpt_photo' | 'chatgpt_text';
 type StoredEstimate = { estimate: Estimate; source: EstimateSource };
+type ConversationTurn = StoredEstimate & {
+  id: string;
+  message: string;
+  photoName: string | null;
+};
+type StoredConversation = { turns: ConversationTurn[] };
 
 function isEstimate(value: unknown): value is Estimate {
   if (!value || typeof value !== 'object') return false;
@@ -101,6 +107,25 @@ function isStoredEstimate(value: unknown): value is StoredEstimate {
     isEstimate(candidate.estimate) &&
     (candidate.source === 'chatgpt_photo' ||
       candidate.source === 'chatgpt_text')
+  );
+}
+
+function isConversationTurn(value: unknown): value is ConversationTurn {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<ConversationTurn>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.message === 'string' &&
+    (typeof candidate.photoName === 'string' || candidate.photoName === null) &&
+    isStoredEstimate(candidate)
+  );
+}
+
+function isStoredConversation(value: unknown): value is StoredConversation {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<StoredConversation>;
+  return (
+    Array.isArray(candidate.turns) && candidate.turns.every(isConversationTurn)
   );
 }
 
@@ -1035,43 +1060,65 @@ function ChatCard({
 }) {
   const [message, setMessage] = useState('');
   const [photo, setPhoto] = useState<PendingPhoto | null>(null);
-  const [estimate, setEstimate] = useState<Estimate | null>(null);
-  const [estimateSource, setEstimateSource] = useState<EstimateSource | null>(
-    null,
-  );
+  const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const [preparingPhoto, setPreparingPhoto] = useState(false);
   const [error, setError] = useState('');
   const cameraInput = useRef<HTMLInputElement>(null);
   const libraryInput = useRef<HTMLInputElement>(null);
-  const storageKey = `calorie-chat:pending-estimate:v1:${userId}`;
+  const storageKey = `calorie-chat:estimate-session:v2:${userId}`;
+  const legacyStorageKey = `calorie-chat:pending-estimate:v1:${userId}`;
+  const latestTurn = turns.at(-1) ?? null;
 
   useEffect(() => {
     const restoreTimer = window.setTimeout(() => {
       try {
         const storedValue = window.localStorage.getItem(storageKey);
-        if (!storedValue) return;
-        const stored = JSON.parse(storedValue) as unknown;
-        if (!isStoredEstimate(stored)) {
+        if (storedValue) {
+          const stored = JSON.parse(storedValue) as unknown;
+          if (isStoredConversation(stored)) {
+            setTurns(stored.turns);
+            return;
+          }
           window.localStorage.removeItem(storageKey);
+        }
+
+        const legacyValue = window.localStorage.getItem(legacyStorageKey);
+        if (!legacyValue) return;
+        const legacy = JSON.parse(legacyValue) as unknown;
+        if (!isStoredEstimate(legacy)) {
+          window.localStorage.removeItem(legacyStorageKey);
           return;
         }
-        setEstimate(stored.estimate);
-        setEstimateSource(stored.source);
+        const migratedTurn: ConversationTurn = {
+          id: crypto.randomUUID(),
+          message: 'My previous meal estimate',
+          photoName: legacy.source === 'chatgpt_photo' ? 'Meal photo' : null,
+          ...legacy,
+        };
+        setTurns([migratedTurn]);
+        window.localStorage.setItem(
+          storageKey,
+          JSON.stringify({
+            turns: [migratedTurn],
+          } satisfies StoredConversation),
+        );
+        window.localStorage.removeItem(legacyStorageKey);
       } catch {
         window.localStorage.removeItem(storageKey);
+        window.localStorage.removeItem(legacyStorageKey);
       }
     }, 0);
     return () => window.clearTimeout(restoreTimer);
-  }, [storageKey]);
+  }, [legacyStorageKey, storageKey]);
 
   function clearEstimateSession() {
     setMessage('');
     setPhoto(null);
-    setEstimate(null);
-    setEstimateSource(null);
+    setTurns([]);
     setError('');
     window.localStorage.removeItem(storageKey);
+    window.localStorage.removeItem(legacyStorageKey);
   }
 
   async function selectPhoto(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1082,7 +1129,6 @@ function ChatCard({
     setError('');
     try {
       setPhoto(await prepareMealPhoto(file));
-      setEstimate(null);
     } catch (photoError) {
       setError(
         photoError instanceof Error
@@ -1103,7 +1149,6 @@ function ChatCard({
     setMessage('');
     setBusy(true);
     setError('');
-    setEstimate(null);
     try {
       const { data } = await supabase.auth.getSession();
       const response = await fetch('/api/estimate', {
@@ -1129,13 +1174,20 @@ function ChatCard({
         const source: EstimateSource = submittedPhoto
           ? 'chatgpt_photo'
           : 'chatgpt_text';
-        setEstimate(result);
-        setEstimateSource(source);
+        const nextTurn: ConversationTurn = {
+          id: crypto.randomUUID(),
+          message: submittedMessage,
+          photoName: submittedPhoto?.name ?? null,
+          estimate: result,
+          source,
+        };
+        const nextTurns = [...turns, nextTurn];
+        setTurns(nextTurns);
         setPhoto(null);
         estimated = true;
         window.localStorage.setItem(
           storageKey,
-          JSON.stringify({ estimate: result, source } satisfies StoredEstimate),
+          JSON.stringify({ turns: nextTurns } satisfies StoredConversation),
         );
       } else {
         setError('The estimate response was incomplete. Please try again.');
@@ -1148,17 +1200,17 @@ function ChatCard({
     }
   }
   async function saveEstimate() {
-    if (!estimate) return;
+    if (!latestTurn) return;
     setBusy(true);
     setError('');
     const { data } = await supabase.auth.getUser();
     const now = new Date();
-    const rows = estimate.meals.map((meal) => ({
+    const rows = latestTurn.estimate.meals.map((meal) => ({
       ...meal,
       user_id: data.user!.id,
       date: singaporeDate(),
       consumed_at: now.toISOString(),
-      source: estimateSource ?? 'chatgpt_text',
+      source: latestTurn.source,
       idempotency_key: crypto.randomUUID(),
     }));
     const { error: saveError } = await supabase.from('meals').insert(rows);
@@ -1202,7 +1254,7 @@ function ChatCard({
           <RefreshCw />
         </Button>
       </div>
-      {!estimate && (
+      {turns.length === 0 && (
         <div className="mt-5 rounded-2xl rounded-bl-md bg-[#f6f2fc] px-4 py-3.5 text-sm leading-6">
           <p className="font-semibold text-[#493d70]">What did you eat?</p>
           <p className="text-muted-foreground">
@@ -1210,39 +1262,64 @@ function ChatCard({
           </p>
         </div>
       )}
-      {estimate && (
-        <div className="mt-5 rounded-2xl bg-card p-4 shadow-sm">
-          <p className="text-sm font-semibold">{estimate.reply}</p>
-          <div className="mt-3 space-y-2">
-            {estimate.meals.map((meal, index) => (
-              <div
-                key={index}
-                className="flex justify-between border-t pt-2 text-sm"
-              >
-                <span>
-                  {meal.food_name}
-                  <small className="block text-muted-foreground">
-                    {meal.calorie_low}–{meal.calorie_high} kcal ·{' '}
-                    {meal.confidence.replace('_', ' ')}
-                  </small>
-                </span>
-                <strong>{meal.calories} kcal</strong>
+      {turns.length > 0 && (
+        <div
+          className="mt-5 max-h-[28rem] space-y-5 overflow-y-auto overscroll-contain pr-1"
+          aria-label="Current meal conversation"
+        >
+          {turns.map((turn, turnIndex) => {
+            const isLatest = turnIndex === turns.length - 1;
+            return (
+              <div key={turn.id} className="space-y-2.5">
+                <div className="ml-auto w-fit max-w-[88%] rounded-2xl rounded-br-md bg-[#6750a4] px-4 py-3 text-sm leading-5 text-white shadow-sm">
+                  <p>{turn.message || 'Please estimate this food photo.'}</p>
+                  {turn.photoName && (
+                    <p className="mt-1.5 flex items-center justify-end gap-1.5 text-[11px] text-white/75">
+                      <Camera className="size-3" /> {turn.photoName}
+                    </p>
+                  )}
+                </div>
+                <div className="rounded-2xl rounded-bl-md bg-[#f6f2fc] p-4 shadow-sm">
+                  <p className="text-sm font-semibold text-[#302852]">
+                    {turn.estimate.reply}
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {turn.estimate.meals.map((meal, mealIndex) => (
+                      <div
+                        key={`${turn.id}-${mealIndex}`}
+                        className="flex justify-between gap-3 border-t border-[#ded5f0] pt-2 text-sm"
+                      >
+                        <span>
+                          {meal.food_name}
+                          <small className="block text-muted-foreground">
+                            {meal.calorie_low}–{meal.calorie_high} kcal ·{' '}
+                            {meal.confidence.replace('_', ' ')}
+                          </small>
+                        </span>
+                        <strong className="shrink-0">
+                          {meal.calories} kcal
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                  {turn.estimate.follow_up && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      {turn.estimate.follow_up}
+                    </p>
+                  )}
+                  {isLatest && (
+                    <Button
+                      onClick={saveEstimate}
+                      disabled={busy}
+                      className="mt-4 w-full"
+                    >
+                      Save {turn.estimate.meals.length > 1 ? 'meals' : 'meal'}
+                    </Button>
+                  )}
+                </div>
               </div>
-            ))}
-          </div>
-          {estimate.follow_up && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              {estimate.follow_up}
-            </p>
-          )}
-          <div className="mt-4 flex gap-2">
-            <Button onClick={saveEstimate} disabled={busy} className="flex-1">
-              Save {estimate.meals.length > 1 ? 'meals' : 'meal'}
-            </Button>
-            <Button variant="outline" onClick={clearEstimateSession}>
-              Start over
-            </Button>
-          </div>
+            );
+          })}
         </div>
       )}
       {error && (
@@ -1292,7 +1369,6 @@ function ChatCard({
             className="shrink-0 rounded-xl"
             onClick={() => {
               setPhoto(null);
-              setEstimate(null);
             }}
             disabled={busy}
             aria-label="Remove photo"
