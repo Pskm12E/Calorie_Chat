@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { createClient } from '@/lib/supabase/client';
+import { MAX_ESTIMATE_HISTORY } from '@/lib/meal-estimate';
 
 type View = 'today' | 'history' | 'progress' | 'settings';
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'drink';
@@ -1157,6 +1158,11 @@ function ChatCard({
         body: JSON.stringify({
           message: submittedMessage,
           image: submittedPhoto?.dataUrl,
+          history: turns.slice(-MAX_ESTIMATE_HISTORY).map((turn) => ({
+            message: turn.message,
+            photoName: turn.photoName,
+            estimate: turn.estimate,
+          })),
         }),
       });
       const result = (await response.json()) as unknown;
@@ -1171,9 +1177,11 @@ function ChatCard({
             : responseError || 'Unable to estimate this meal.',
         );
       } else if (isEstimate(result)) {
-        const source: EstimateSource = submittedPhoto
-          ? 'chatgpt_photo'
-          : 'chatgpt_text';
+        const source: EstimateSource =
+          submittedPhoto ||
+          turns.some((turn) => turn.source === 'chatgpt_photo')
+            ? 'chatgpt_photo'
+            : 'chatgpt_text';
         const nextTurn: ConversationTurn = {
           id: crypto.randomUUID(),
           message: submittedMessage,

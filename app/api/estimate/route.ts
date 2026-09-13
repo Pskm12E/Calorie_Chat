@@ -1,36 +1,11 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { authenticatedClient } from '@/lib/supabase/api';
-
-const estimateRequestSchema = z
-  .object({
-    message: z.string().trim().max(2000).optional().default(''),
-    image: z
-      .string()
-      .max(6_000_000)
-      .regex(/^data:image\/(?:jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/)
-      .optional(),
-  })
-  .refine((value) => value.message.length > 0 || Boolean(value.image), {
-    message: 'Describe your meal or add a photo.',
-  });
-
-const estimateResponseSchema = z.object({
-  reply: z.string(),
-  follow_up: z.string().nullable(),
-  meals: z.array(
-    z.object({
-      food_name: z.string(),
-      meal_type: z.enum(['breakfast', 'lunch', 'dinner', 'snack', 'drink']),
-      quantity: z.number(),
-      calories: z.number().int(),
-      calorie_low: z.number().int(),
-      calorie_high: z.number().int(),
-      confidence: z.enum(['high', 'medium_high', 'medium', 'low']),
-      notes: z.string(),
-    }),
-  ),
-});
+import {
+  buildEstimateInput,
+  estimateRequestSchema,
+  estimateResponseSchema,
+  MEAL_SESSION_INSTRUCTIONS,
+} from '@/lib/meal-estimate';
 
 const schema = {
   type: 'object',
@@ -81,27 +56,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   if (!process.env.OPENAI_API_KEY)
     return NextResponse.json({ error: 'AI_SETUP_REQUIRED' }, { status: 503 });
-  const parsedBody = estimateRequestSchema.safeParse(await request.json());
+  const parsedBody = estimateRequestSchema.safeParse(
+    await request.json().catch(() => null),
+  );
   if (!parsedBody.success)
     return NextResponse.json(
-      { error: 'Describe your meal or add a valid photo.' },
+      {
+        error:
+          'The meal message, photo, or conversation could not be read. Please try again.',
+      },
       { status: 422 },
     );
-  const { message, image } = parsedBody.data;
-
-  const content: Array<
-    | { type: 'input_text'; text: string }
-    | { type: 'input_image'; image_url: string; detail: 'auto' }
-  > = [
-    {
-      type: 'input_text',
-      text:
-        message ||
-        'Identify the visible food and estimate the portions and total calories.',
-    },
-  ];
-  if (image)
-    content.push({ type: 'input_image', image_url: image, detail: 'auto' });
 
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -119,8 +84,9 @@ When a photo is included, identify only the visible foods and estimate their por
 Split multiple foods into separate meal entries. Calories are totals for the full entry, not per-unit values.
 State important assumptions in notes. Use the user's stated calories or portion facts over your assumptions.
 Infer meal type from wording and Singapore local time when possible. Ask at most one concise follow-up question.
-Never describe an estimate as exact. Do not save anything; the user must review first.`,
-      input: [{ role: 'user', content }],
+Never describe an estimate as exact. Do not save anything; the user must review first.
+${MEAL_SESSION_INSTRUCTIONS}`,
+      input: buildEstimateInput(parsedBody.data),
       text: {
         format: {
           type: 'json_schema',
